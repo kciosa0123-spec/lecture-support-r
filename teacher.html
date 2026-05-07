@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>教員用ダッシュボード（龍谷大学）</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+      background: #fafafa;
+    }
+    h2 { color: #333; }
+    .login-section {
+      background: #f5f5f5;
+      padding: 30px;
+      border-radius: 8px;
+      text-align: center;
+      margin-top: 40px;
+    }
+    button {
+      background: #4285f4;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #3367d6; }
+    button.logout {
+      background: #999;
+      font-size: 14px;
+      padding: 6px 12px;
+    }
+    button.answered {
+      background: #28a745;
+      font-size: 13px;
+      padding: 4px 10px;
+    }
+    button.unanswered {
+      background: #ffc107;
+      color: #333;
+      font-size: 13px;
+      padding: 4px 10px;
+    }
+    .toolbar {
+      background: white;
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .toolbar-info { font-size: 14px; color: #555; }
+    .question-card {
+      background: white;
+      border: 1px solid #ddd;
+      border-left: 4px solid #4285f4;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      border-radius: 6px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .question-card.answered {
+      border-left-color: #28a745;
+      opacity: 0.7;
+    }
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 8px;
+    }
+    .meta-left { font-weight: bold; color: #333; }
+    .content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-size: 16px;
+    }
+    .empty-message {
+      text-align: center;
+      color: #999;
+      padding: 40px;
+    }
+    .filter-btn {
+      background: #eee;
+      color: #333;
+      font-size: 13px;
+      padding: 6px 12px;
+      margin-right: 6px;
+    }
+    .filter-btn.active {
+      background: #4285f4;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <h2>教員用：リアルタイム質問ダッシュボード</h2>
+
+  <div id="login-section" class="login-section">
+    <p>教員用Googleアカウントでログインしてください。</p>
+    <button id="login-btn">Googleでログイン</button>
+    <p id="login-error" style="color:#c00; margin-top:15px;"></p>
+  </div>
+
+  <div id="dashboard-section" style="display:none;">
+    <div class="toolbar">
+      <div>
+        <button class="filter-btn active" data-filter="all">すべて</button>
+        <button class="filter-btn" data-filter="unanswered">未対応のみ</button>
+      </div>
+      <div class="toolbar-info">
+        <span id="user-info"></span>
+        <button id="logout-btn" class="logout">ログアウト</button>
+      </div>
+    </div>
+    <div id="questions-container">
+      <p class="empty-message">質問を待っています…</p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+    import { getDatabase, ref, query, orderByChild, startAt, onChildAdded, onChildChanged, update } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
+    // ★ student.html と同じ firebaseConfig を貼り付けてください
+    const firebaseConfig = {
+      apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
+      authDomain: "lecture-support.firebaseapp.com",
+      databaseURL: "https://lecture-support-default-rtdb.firebaseio.com",
+      projectId: "lecture-support",
+      storageBucket: "lecture-support.firebasestorage.app",
+      messagingSenderId: "285290664467",
+      appId: "1:285290664467:web:b39a07bbb08da6fc45a5e6"
+    };
+
+    const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
+
+    const loginSection = document.getElementById('login-section');
+    const dashboardSection = document.getElementById('dashboard-section');
+    const userInfo = document.getElementById('user-info');
+    const loginError = document.getElementById('login-error');
+    const container = document.getElementById('questions-container');
+    let currentFilter = 'all';
+    let listenerStarted = false;
+
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      const d = new Date(timestamp);
+      return d.toLocaleString('ja-JP', {
+        month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    function applyFilter() {
+      const cards = container.querySelectorAll('.question-card');
+      cards.forEach(card => {
+        const isAnswered = card.classList.contains('answered');
+        if (currentFilter === 'unanswered' && isAnswered) {
+          card.style.display = 'none';
+        } else {
+          card.style.display = 'block';
+        }
+      });
+    }
+
+    function renderCard(key, data) {
+      const existing = document.getElementById('q-' + key);
+      if (existing) {
+        if (data.answered) existing.classList.add('answered');
+        else existing.classList.remove('answered');
+        const btn = existing.querySelector('.toggle-answered');
+        if (btn) {
+          btn.className = 'toggle-answered ' + (data.answered ? 'answered' : 'unanswered');
+          btn.textContent = data.answered ? '対応済み' : '未対応';
+        }
+        applyFilter();
+        return;
+      }
+
+      const emptyMsg = container.querySelector('.empty-message');
+      if (emptyMsg) emptyMsg.remove();
+
+      const card = document.createElement('div');
+      card.className = 'question-card' + (data.answered ? ' answered' : '');
+      card.id = 'q-' + key;
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+
+      const metaLeft = document.createElement('span');
+      metaLeft.className = 'meta-left';
+      metaLeft.textContent = `[${data.studentId}] ${data.studentName} / ${formatTime(data.timestamp)}`;
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'toggle-answered ' + (data.answered ? 'answered' : 'unanswered');
+      toggleBtn.textContent = data.answered ? '対応済み' : '未対応';
+      toggleBtn.addEventListener('click', () => {
+        update(ref(db, 'questions/' + key), { answered: !data.answered });
+      });
+
+      meta.appendChild(metaLeft);
+      meta.appendChild(toggleBtn);
+
+      const content = document.createElement('div');
+      content.className = 'content';
+      content.textContent = data.content;
+
+      card.appendChild(meta);
+      card.appendChild(content);
+      container.prepend(card);
+      applyFilter();
+    }
+
+    function startListening() {
+      if (listenerStarted) return;
+      listenerStarted = true;
+
+      // 24時間以内の質問のみ取得
+      const since = Date.now() - 24 * 60 * 60 * 1000;
+      const q = query(ref(db, 'questions'), orderByChild('timestamp'), startAt(since));
+
+      onChildAdded(q, (snapshot) => {
+        renderCard(snapshot.key, snapshot.val());
+      });
+
+      onChildChanged(q, (snapshot) => {
+        renderCard(snapshot.key, snapshot.val());
+      });
+    }
+
+    onAuthStateChanged(auth, (user) => {
+      if (user && user.email === TEACHER_EMAIL) {
+        loginSection.style.display = 'none';
+        dashboardSection.style.display = 'block';
+        userInfo.textContent = user.email;
+        startListening();
+      } else {
+        loginSection.style.display = 'block';
+        dashboardSection.style.display = 'none';
+        if (user) {
+          loginError.textContent = "教員用アカウントではありません。";
+          signOut(auth);
+        }
+      }
+    });
+
+    document.getElementById('login-btn').addEventListener('click', async () => {
+      loginError.textContent = '';
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (error) {
+        console.error(error);
+        loginError.textContent = "ログインに失敗しました。";
+      }
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      signOut(auth);
+      location.reload();
+    });
+
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        applyFilter();
+      });
+    });
+  </script>
+</body>
+</html>
