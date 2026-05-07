@@ -213,8 +213,9 @@
       toggleBtn.className = 'toggle-answered ' + (data.answered ? 'answered' : 'unanswered');
       toggleBtn.textContent = data.answered ? '対応済み' : '未対応';
       toggleBtn.addEventListener('click', () => {
-        update(ref(db, 'questions/' + key), { answered: !data.answered });
-      });
+      const currentState = card.classList.contains('answered');
+      update(ref(db, 'questions/' + key), { answered: !currentState });
+    });
 
       meta.appendChild(metaLeft);
       meta.appendChild(toggleBtn);
