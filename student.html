@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>質問送信ツール（龍谷大学）</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h2 { color: #333; }
+    .login-section, .question-section {
+      background: #f5f5f5;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+    button {
+      background: #4285f4;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #3367d6; }
+    button:disabled { background: #999; cursor: not-allowed; }
+    button.logout {
+      background: #999;
+      font-size: 14px;
+      padding: 6px 12px;
+    }
+    textarea {
+      width: 100%;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+    .profile {
+      background: #e8f0fe;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .status {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    .status.success { background: #d4edda; color: #155724; display: block; }
+    .status.error { background: #f8d7da; color: #721c24; display: block; }
+  </style>
+</head>
+<body>
+  <h2>質問・コメント送信</h2>
+
+  <div id="login-section" class="login-section">
+    <p>大学のGoogleアカウント（@mail.ryukoku.ac.jp）でログインしてください。</p>
+    <button id="login-btn">Googleでログイン</button>
+  </div>
+
+  <div id="question-section" class="question-section" style="display:none;">
+    <div class="profile">
+      <span id="display-profile"></span>
+      <button id="logout-btn" class="logout">ログアウト</button>
+    </div>
+    <textarea id="question-text" rows="5" placeholder="質問やコメントを入力してください（1000文字以内）"></textarea>
+    <br><br>
+    <button id="send-btn">送信する</button>
+    <div id="status" class="status"></div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+    import { getDatabase, ref, push, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
+    // ★ ここをご自身のFirebase設定に書き換えてください
+    const firebaseConfig = {
+  apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
+  authDomain: "lecture-support.firebaseapp.com",
+  databaseURL: "https://lecture-support-default-rtdb.firebaseio.com",
+  projectId: "lecture-support",
+  storageBucket: "lecture-support.firebasestorage.app",
+  messagingSenderId: "285290664467",
+  appId: "1:285290664467:web:b39a07bbb08da6fc45a5e6"
+};
+
+    const ALLOWED_DOMAIN = "@mail.ryukoku.ac.jp";
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
+
+    const loginSection = document.getElementById('login-section');
+    const questionSection = document.getElementById('question-section');
+    const displayProfile = document.getElementById('display-profile');
+    const statusDiv = document.getElementById('status');
+    const sendBtn = document.getElementById('send-btn');
+
+    function showStatus(message, type) {
+      statusDiv.textContent = message;
+      statusDiv.className = 'status ' + type;
+      setTimeout(() => { statusDiv.className = 'status'; }, 4000);
+    }
+
+    function extractStudentId(email) {
+      return email.split('@')[0];
+    }
+
+    onAuthStateChanged(auth, (user) => {
+      if (user && user.email && user.email.endsWith(ALLOWED_DOMAIN)) {
+        const studentId = extractStudentId(user.email);
+        loginSection.style.display = 'none';
+        questionSection.style.display = 'block';
+        displayProfile.textContent = `${studentId} ${user.displayName || ''} さん`;
+      } else {
+        loginSection.style.display = 'block';
+        questionSection.style.display = 'none';
+        if (user) {
+          showStatus("龍谷大学のメールアドレスでログインしてください。", "error");
+          signOut(auth);
+        }
+      }
+    });
+
+    document.getElementById('login-btn').addEventListener('click', async () => {
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (error) {
+        console.error(error);
+        showStatus("ログインに失敗しました。", "error");
+      }
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      signOut(auth);
+    });
+
+    sendBtn.addEventListener('click', async () => {
+      const text = document.getElementById('question-text').value.trim();
+      if (!text) {
+        showStatus("内容を入力してください。", "error");
+        return;
+      }
+      if (text.length > 1000) {
+        showStatus("1000文字以内で入力してください。", "error");
+        return;
+      }
+
+      const user = auth.currentUser;
+      if (!user) {
+        showStatus("ログインが必要です。", "error");
+        return;
+      }
+
+      sendBtn.disabled = true;
+      try {
+        await push(ref(db, 'questions'), {
+          studentId: extractStudentId(user.email),
+          studentName: user.displayName || '名前未設定',
+          email: user.email,
+          content: text,
+          timestamp: serverTimestamp()
+        });
+        document.getElementById('question-text').value = '';
+        showStatus("送信しました。", "success");
+      } catch (error) {
+        console.error(error);
+        showStatus("送信に失敗しました。", "error");
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
