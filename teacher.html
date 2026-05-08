@@ -29,6 +29,7 @@
       font-size: 16px;
       border-radius: 4px;
       cursor: pointer;
+      transition: 0.3s;
     }
     button:hover { background: #3367d6; }
     button.logout {
@@ -36,17 +37,58 @@
       font-size: 14px;
       padding: 6px 12px;
     }
-    button.answered {
-      background: #28a745;
-      font-size: 13px;
-      padding: 4px 10px;
+
+    /* 出席表示エリアのスタイル */
+    .attendance-box {
+      background: #fff;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    button.unanswered {
-      background: #ffc107;
-      color: #333;
-      font-size: 13px;
-      padding: 4px 10px;
+    .attendance-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
+    .count-text {
+      font-size: 1.2em;
+      font-weight: bold;
+    }
+    #attendance-count {
+      color: #28a745;
+      font-size: 1.5em;
+    }
+    .toggle-btn {
+      background: #6c757d;
+      padding: 6px 15px;
+      font-size: 14px;
+    }
+    #attendance-list-container {
+      display: none;
+      margin-top: 15px;
+      border-top: 1px solid #eee;
+      padding-top: 10px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th {
+      background: #f8f9fa;
+      text-align: left;
+      padding: 8px;
+      border-bottom: 2px solid #dee2e6;
+    }
+    td {
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+    }
+
+    /* 質問カードのスタイル */
     .toolbar {
       background: white;
       padding: 12px 16px;
@@ -57,7 +99,6 @@
       align-items: center;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
-    .toolbar-info { font-size: 14px; color: #555; }
     .question-card {
       background: white;
       border: 1px solid #ddd;
@@ -71,6 +112,8 @@
       border-left-color: #28a745;
       opacity: 0.7;
     }
+    .toggle-answered.answered { background: #28a745; }
+    .toggle-answered.unanswered { background: #ffc107; color: #333; }
     .meta {
       display: flex;
       justify-content: space-between;
@@ -79,17 +122,7 @@
       color: #666;
       margin-bottom: 8px;
     }
-    .meta-left { font-weight: bold; color: #333; }
-    .content {
-      white-space: pre-wrap;
-      word-wrap: break-word;
-      font-size: 16px;
-    }
-    .empty-message {
-      text-align: center;
-      color: #999;
-      padding: 40px;
-    }
+    .content { white-space: pre-wrap; font-size: 16px; }
     .filter-btn {
       background: #eee;
       color: #333;
@@ -97,10 +130,7 @@
       padding: 6px 12px;
       margin-right: 6px;
     }
-    .filter-btn.active {
-      background: #4285f4;
-      color: white;
-    }
+    .filter-btn.active { background: #4285f4; color: white; }
   </style>
 </head>
 <body>
@@ -113,6 +143,30 @@
   </div>
 
   <div id="dashboard-section" style="display:none;">
+    
+    <div class="attendance-box">
+      <div class="attendance-header">
+        <div class="count-text">
+          本日の出席者数: <span id="attendance-count">0</span> 名
+        </div>
+        <button id="toggle-list-btn" class="toggle-btn">名簿を表示</button>
+      </div>
+      
+      <div id="attendance-list-container">
+        <table>
+          <thead>
+            <tr>
+              <th>学籍番号</th>
+              <th>氏名</th>
+              <th>時刻</th>
+            </tr>
+          </thead>
+          <tbody id="attendance-list-body">
+            </tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="toolbar">
       <div>
         <button class="filter-btn active" data-filter="all">すべて</button>
@@ -123,17 +177,17 @@
         <button id="logout-btn" class="logout">ログアウト</button>
       </div>
     </div>
+
     <div id="questions-container">
-      <p class="empty-message">質問を待っています…</p>
+      <p class="empty-message" style="text-align:center; color:#999; padding:40px;">質問を待っています…</p>
     </div>
   </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
     import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-    import { getDatabase, ref, query, orderByChild, startAt, onChildAdded, onChildChanged, update } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+    import { getDatabase, ref, query, orderByChild, startAt, onChildAdded, onChildChanged, onValue, update } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
-    // ★ student.html と同じ firebaseConfig を貼り付けてください
     const firebaseConfig = {
       apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
       authDomain: "lecture-support.firebaseapp.com",
@@ -145,52 +199,80 @@
     };
 
     const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
-
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getDatabase(app);
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
 
+    const today = new Date().toISOString().split('T')[0];
+
+    // DOM要素
     const loginSection = document.getElementById('login-section');
     const dashboardSection = document.getElementById('dashboard-section');
     const userInfo = document.getElementById('user-info');
     const loginError = document.getElementById('login-error');
     const container = document.getElementById('questions-container');
+    const attendanceCountEl = document.getElementById('attendance-count');
+    const attendanceListBody = document.getElementById('attendance-list-body');
+    const toggleListBtn = document.getElementById('toggle-list-btn');
+    const listContainer = document.getElementById('attendance-list-container');
+
     let currentFilter = 'all';
     let listenerStarted = false;
 
+    // --- 出席管理のロジック ---
+    function startAttendanceListening() {
+      const attendanceRef = ref(db, `attendance/${today}`);
+      onValue(attendanceRef, (snapshot) => {
+        const data = snapshot.val();
+        if (!data) {
+          attendanceCountEl.innerText = '0';
+          attendanceListBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">出席者はまだいません</td></tr>';
+          return;
+        }
+
+        const studentIds = Object.keys(data).sort(); // 学籍番号順にソート
+        attendanceCountEl.innerText = studentIds.length;
+        
+        attendanceListBody.innerHTML = '';
+        studentIds.forEach(id => {
+          const info = data[id];
+          const time = info.timestamp ? new Date(info.timestamp).toLocaleTimeString('ja-JP', {hour: '2-digit', minute:'2-digit'}) : '--:--';
+          const row = `<tr><td>${id}</td><td>${info.studentName}</td><td style="color:#666;">${time}</td></tr>`;
+          attendanceListBody.insertAdjacentHTML('beforeend', row);
+        });
+      });
+    }
+
+    toggleListBtn.addEventListener('click', () => {
+      const isHidden = listContainer.style.display === 'none' || listContainer.style.display === '';
+      listContainer.style.display = isHidden ? 'block' : 'none';
+      toggleListBtn.innerText = isHidden ? '名簿を閉じる' : '名簿を表示';
+    });
+
+    // --- 質問管理のロジック (既存) ---
     function formatTime(timestamp) {
       if (!timestamp) return '';
       const d = new Date(timestamp);
-      return d.toLocaleString('ja-JP', {
-        month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit'
-      });
+      return d.toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     }
 
     function applyFilter() {
       const cards = container.querySelectorAll('.question-card');
       cards.forEach(card => {
         const isAnswered = card.classList.contains('answered');
-        if (currentFilter === 'unanswered' && isAnswered) {
-          card.style.display = 'none';
-        } else {
-          card.style.display = 'block';
-        }
+        card.style.display = (currentFilter === 'unanswered' && isAnswered) ? 'none' : 'block';
       });
     }
 
     function renderCard(key, data) {
       const existing = document.getElementById('q-' + key);
       if (existing) {
-        if (data.answered) existing.classList.add('answered');
-        else existing.classList.remove('answered');
+        existing.classList.toggle('answered', !!data.answered);
         const btn = existing.querySelector('.toggle-answered');
-        if (btn) {
-          btn.className = 'toggle-answered ' + (data.answered ? 'answered' : 'unanswered');
-          btn.textContent = data.answered ? '対応済み' : '未対応';
-        }
+        btn.className = 'toggle-answered ' + (data.answered ? 'answered' : 'unanswered');
+        btn.textContent = data.answered ? '対応済み' : '未対応';
         applyFilter();
         return;
       }
@@ -201,31 +283,19 @@
       const card = document.createElement('div');
       card.className = 'question-card' + (data.answered ? ' answered' : '');
       card.id = 'q-' + key;
+      card.innerHTML = `
+        <div class="meta">
+          <span class="meta-left">[${data.studentId}] ${data.studentName} / ${formatTime(data.timestamp)}</span>
+          <button class="toggle-answered ${data.answered ? 'answered' : 'unanswered'}">${data.answered ? '対応済み' : '未対応'}</button>
+        </div>
+        <div class="content">${data.content}</div>
+      `;
 
-      const meta = document.createElement('div');
-      meta.className = 'meta';
+      card.querySelector('.toggle-answered').addEventListener('click', () => {
+        const currentState = card.classList.contains('answered');
+        update(ref(db, 'questions/' + key), { answered: !currentState });
+      });
 
-      const metaLeft = document.createElement('span');
-      metaLeft.className = 'meta-left';
-      metaLeft.textContent = `[${data.studentId}] ${data.studentName} / ${formatTime(data.timestamp)}`;
-
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = 'toggle-answered ' + (data.answered ? 'answered' : 'unanswered');
-      toggleBtn.textContent = data.answered ? '対応済み' : '未対応';
-      toggleBtn.addEventListener('click', () => {
-      const currentState = card.classList.contains('answered');
-      update(ref(db, 'questions/' + key), { answered: !currentState });
-    });
-
-      meta.appendChild(metaLeft);
-      meta.appendChild(toggleBtn);
-
-      const content = document.createElement('div');
-      content.className = 'content';
-      content.textContent = data.content;
-
-      card.appendChild(meta);
-      card.appendChild(content);
       container.prepend(card);
       applyFilter();
     }
@@ -233,20 +303,14 @@
     function startListening() {
       if (listenerStarted) return;
       listenerStarted = true;
-
-      // 24時間以内の質問のみ取得
       const since = Date.now() - 24 * 60 * 60 * 1000;
       const q = query(ref(db, 'questions'), orderByChild('timestamp'), startAt(since));
-
-      onChildAdded(q, (snapshot) => {
-        renderCard(snapshot.key, snapshot.val());
-      });
-
-      onChildChanged(q, (snapshot) => {
-        renderCard(snapshot.key, snapshot.val());
-      });
+      onChildAdded(q, (snapshot) => renderCard(snapshot.key, snapshot.val()));
+      onChildChanged(q, (snapshot) => renderCard(snapshot.key, snapshot.val()));
+      startAttendanceListening(); // 出席監視も開始
     }
 
+    // --- 認証処理 ---
     onAuthStateChanged(auth, (user) => {
       if (user && user.email === TEACHER_EMAIL) {
         loginSection.style.display = 'none';
@@ -257,27 +321,14 @@
         loginSection.style.display = 'block';
         dashboardSection.style.display = 'none';
         if (user) {
-          loginError.textContent = "教員用アカウントではありません。";
+          alert("教員用アカウントではありません。");
           signOut(auth);
         }
       }
     });
 
-    document.getElementById('login-btn').addEventListener('click', async () => {
-      loginError.textContent = '';
-      try {
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        console.error(error);
-        loginError.textContent = "ログインに失敗しました。";
-      }
-    });
-
-    document.getElementById('logout-btn').addEventListener('click', () => {
-      signOut(auth);
-      location.reload();
-    });
-
+    document.getElementById('login-btn').addEventListener('click', () => signInWithPopup(auth, provider));
+    document.getElementById('logout-btn').addEventListener('click', () => { signOut(auth); location.reload(); });
     document.querySelectorAll('.filter-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
