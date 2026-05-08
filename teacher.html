@@ -198,3 +198,41 @@
       await set(ref(db, 'active_session'), { label: label });
       location.reload();
     };
+
+    onAuthStateChanged(auth, (user) => {
+      if (user && user.email === "osada@mail.ryukoku.ac.jp") {
+        document.getElementById('login-section').style.display = 'none';
+        document.getElementById('dashboard-section').style.display = 'block';
+        onValue(ref(db, 'active_session'), (snap) => {
+          const val = snap.val();
+          if (val) {
+            document.getElementById('active-label').innerText = val.label;
+            currentSession = val.label;
+            const path = val.label.replace(/[.#$/[\]]/g, "_");
+            onValue(ref(db, `attendance/${path}`), (s) => {
+              const d = s.val() || {}; const ids = Object.keys(d).sort();
+              document.getElementById('attendance-count').innerText = ids.length;
+              document.getElementById('attendance-list-body').innerHTML = ids.map(id => `<tr><td>${id}</td><td>${d[id].studentName}</td><td>${new Date(d[id].timestamp).toLocaleTimeString()}</td></tr>`).join('');
+            });
+            onChildAdded(ref(db, `questions/${path}`), (s) => renderQuestion(s.key, s.val()));
+            onChildChanged(ref(db, `questions/${path}`), (s) => renderQuestion(s.key, s.val()));
+          }
+        });
+      }
+    });
+
+    function renderQuestion(key, data) {
+      const c = document.getElementById('questions-container');
+      if (c.innerText.includes("待っています")) c.innerHTML = "";
+      let card = document.getElementById(`q-${key}`);
+      if (!card) { card = document.createElement('div'); card.id = `q-${key}`; c.prepend(card); }
+      card.className = `question-card ${data.answered ? 'answered' : ''}`;
+      card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:16px; margin-top:5px; white-space:pre-wrap;">${data.content}</div>`;
+    }
+
+    window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
+    document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
+    document.getElementById('toggle-list-btn').onclick = () => { const el = document.getElementById('attendance-list-container'); el.style.display = el.style.display === 'none' ? 'block' : 'none'; };
+  </script>
+</body>
+</html>
