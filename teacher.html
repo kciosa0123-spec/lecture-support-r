@@ -22,6 +22,9 @@
     .archive-actions { display: none; margin-top: 10px; background: #f1f3f4; padding: 10px; border-radius: 4px; }
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 14px; margin-bottom: 12px; border-radius: 6px; }
     .question-card.answered { border-left-color: #28a745; opacity: 0.7; }
+    
+    /* アーカイブリスト表示エリアの初期状態を非表示に設定 */
+    #archive-list-area { display: none; }
   </style>
 </head>
 <body>
@@ -83,7 +86,6 @@
     import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
     import { getDatabase, ref, set, get, onValue, onChildAdded, onChildChanged, update, remove } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
-    // Firebase初期設定（フル構成）
     const firebaseConfig = {
       apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
       authDomain: "lecture-support.firebaseapp.com",
@@ -100,11 +102,11 @@
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
 
-    const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
+    const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp"; [cite: 35, 57]
     document.getElementById('inp-date').valueAsDate = new Date();
     let currentSession = "";
 
-    // --- CSVダウンロード関数（バグ修正済み） ---
+    // --- CSVダウンロード関数 [cite: 88, 90] ---
     function downloadFile(filename, csv) {
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
       const blob = new Blob([bom, csv], { type: 'text/csv;charset=utf-8;' });
@@ -121,7 +123,7 @@
       }, 150);
     }
 
-    // --- 認証処理 ---
+    // --- 認証処理 [cite: 18, 57, 58, 90] ---
     const loginBtn = document.getElementById('login-btn');
     loginBtn.onclick = async () => {
       try {
@@ -141,12 +143,11 @@
         document.getElementById('user-info').innerText = user.email;
         initDashboard();
       } else if (user) {
-        alert("教員用アカウント（" + TEACHER_EMAIL + "）でログインしてください。");
+        alert("教員用アカウントでログインしてください。");
         signOut(auth);
       }
     });
 
-    // --- ダッシュボード初期化 ---
     function initDashboard() {
       onValue(ref(db, 'active_session'), (snap) => {
         const val = snap.val();
@@ -158,16 +159,13 @@
       });
     }
 
-    // --- リアルタイム監視 ---
     function startMonitoring(label) {
       const path = label.replace(/[.#$/[\]]/g, "_");
-      // 出席
       onValue(ref(db, `attendance/${path}`), (s) => {
         const d = s.val() || {}; const ids = Object.keys(d).sort();
         document.getElementById('attendance-count').innerText = ids.length;
         document.getElementById('attendance-list-body').innerHTML = ids.map(id => `<tr><td>${id}</td><td>${d[id].studentName}</td><td>${new Date(d[id].timestamp).toLocaleTimeString()}</td></tr>`).join('');
       });
-      // 質問
       const qContainer = document.getElementById('questions-container');
       onChildAdded(ref(db, `questions/${path}`), (s) => renderQuestion(s.key, s.val()));
       onChildChanged(ref(db, `questions/${path}`), (s) => renderQuestion(s.key, s.val()));
@@ -182,7 +180,6 @@
       card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:16px; margin-top:5px; white-space:pre-wrap;">${data.content}</div>`;
     }
 
-    // --- グローバル関数（HTMLから呼び出し用） ---
     window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
     
     window.toggleAction = (name) => {
@@ -194,7 +191,7 @@
       const snap = await get(ref(db, `${type}/${sessionName}`));
       const data = snap.val();
       if (!data) return alert("データなし");
-      let csv = (type === 'attendance') ? "学籍番号,氏名,日付,時刻\n" : "日付,時刻,学籍番号,氏名,内容,対応状況\n";
+      let csv = (type === 'attendance') ? "学籍番号,氏名,日付,時刻\n" : "日付,時刻,学籍番号,氏名,内容,対応状況\n"; [cite: 72, 76, 78]
       if (type === 'attendance') {
         Object.keys(data).sort().forEach(id => {
           const d = new Date(data[id].timestamp);
@@ -209,18 +206,22 @@
       downloadFile(`${type}_${sessionName}.csv`, csv);
     };
 
+    // 安全なデータ削除（2段階確認）[cite: 82, 85]
     window.deleteSession = async (name) => {
       if (confirm(`講義「${name}」を削除しますか？`)) {
         if (confirm(`本当に削除しますか？対象：${name}`)) {
           await remove(ref(db, `attendance/${name}`));
           await remove(ref(db, `questions/${name}`));
           alert("削除完了");
-          document.getElementById('load-archive-btn').click();
+          // リストが表示中の場合は再読み込み
+          if (document.getElementById('archive-list-area').style.display === 'block') {
+            loadArchive(true); 
+          }
         }
       }
     };
 
-    // --- 各種ボタンイベント ---
+    // 講義切替 [cite: 65, 69, 79, 91]
     document.getElementById('set-session-btn').onclick = async () => {
       const d = new Date(document.getElementById('inp-date').value);
       const label = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value} 第${document.getElementById('inp-count').value}回(${d.getMonth()+1}/${d.getDate()})`;
@@ -228,25 +229,48 @@
       location.reload();
     };
 
-    document.getElementById('load-archive-btn').onclick = async () => {
+    // --- アーカイブ表示・格納ロジック（動作改善部分） ---
+    const loadArchiveBtn = document.getElementById('load-archive-btn');
+    const archiveArea = document.getElementById('archive-list-area');
+
+    async function loadArchive(isSilent = false) {
       const snap = await get(ref(db, 'attendance'));
       const attendanceData = snap.val();
-      const area = document.getElementById('archive-list-area');
-      if (!attendanceData) { area.innerHTML = "<p style='color:#999;'>データなし</p>"; return; }
-      let html = "<table><thead><tr><th>講義名</th><th>操作</th></tr></thead><tbody>";
-      Object.keys(attendanceData).sort().reverse().forEach(name => {
-        html += `<tr><td>${name}</td><td>
-          <button type="button" onclick="window.toggleAction('${name}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">CSV作成</button>
-          <button type="button" onclick="window.deleteSession('${name}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button>
-          <div id="actions-${name}" class="archive-actions">
-            <button type="button" onclick="window.downloadArchive('attendance', '${name}')" class="btn-success" style="font-size:11px;">出席者情報</button>
-            <button type="button" onclick="window.downloadArchive('questions', '${name}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">コメントのデータ</button>
-          </div>
-        </td></tr>`;
-      });
-      area.innerHTML = html + "</tbody></table>";
+      if (!attendanceData) { 
+        archiveArea.innerHTML = "<p style='color:#999;'>データなし</p>"; 
+      } else {
+        let html = "<table><thead><tr><th>講義名</th><th>操作</th></tr></thead><tbody>";
+        Object.keys(attendanceData).sort().reverse().forEach(name => {
+          html += `<tr><td>${name}</td><td>
+            <button type="button" onclick="window.toggleAction('${name}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">CSV作成</button>
+            <button type="button" onclick="window.deleteSession('${name}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button>
+            <div id="actions-${name}" class="archive-actions">
+              <button type="button" onclick="window.downloadArchive('attendance', '${name}')" class="btn-success" style="font-size:11px;">出席者情報</button>
+              <button type="button" onclick="window.downloadArchive('questions', '${name}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">コメントのデータ</button>
+            </div>
+          </td></tr>`;
+        });
+        archiveArea.innerHTML = html + "</tbody></table>";
+      }
+      
+      if (!isSilent) {
+        archiveArea.style.display = 'block';
+        loadArchiveBtn.innerText = 'リストを隠す';
+      }
+    }
+
+    loadArchiveBtn.onclick = async () => {
+      if (archiveArea.style.display === 'block') {
+        // 表示中の場合は隠す（しまう）
+        archiveArea.style.display = 'none';
+        loadArchiveBtn.innerText = '講義リストを表示';
+      } else {
+        // 非表示の場合はデータを取得して表示
+        await loadArchive();
+      }
     };
 
+    // 学期総括出席表 [cite: 82, 85, 90]
     document.getElementById('summary-attendance-btn').onclick = async () => {
       const snap = await get(ref(db, 'attendance'));
       const allData = snap.val();
