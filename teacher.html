@@ -16,20 +16,20 @@
     .btn-success { background: #28a745; }
     .btn-danger { background: #dc3545; }
     .btn-secondary { background: #6c757d; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 10px; }
-    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
     th { background: #f8f9fa; }
     .archive-actions { display: none; margin-top: 10px; background: #f1f3f4; padding: 10px; border-radius: 4px; }
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 14px; margin-bottom: 12px; border-radius: 6px; }
     .question-card.answered { border-left-color: #28a745; opacity: 0.7; }
-    #archive-list-area { display: none; }
+    #archive-list-area, #search-results-area { display: none; }
+    .search-box { display: flex; gap: 10px; margin-bottom: 10px; }
   </style>
 </head>
 <body>
   <h2>教員用：講義支援・アーカイブ管理</h2>
 
   <div id="login-section" class="box" style="text-align: center; padding: 40px;">
-    <p>管理用アカウントでログインしてください。</p>
     <button id="login-btn" type="button" class="btn-blue" style="font-size: 18px;">Googleでログイン</button>
     <p id="login-error" style="color:#c00; margin-top:15px;"></p>
   </div>
@@ -48,15 +48,32 @@
         <div><label>日付</label><input type="date" id="inp-date"></div>
       </div>
       <button id="set-session-btn" type="button" class="btn-warning">講義を開始（切替）</button>
-      <span style="margin-left:15px; font-size:0.9em; color:#666;">現在の接続先: <b id="active-label" style="color:#333;">未設定</b></span>
+      <span style="margin-left:15px; font-size:0.9em; color:#666;">接続先: <b id="active-label" style="color:#333;">未設定</b></span>
+    </div>
+
+    <div class="box" style="border-left: 4px solid #17a2b8;">
+      <p style="margin:0 0 10px 0; font-weight: bold;">過去データの検索・整理</p>
+      <div class="search-box">
+        <input type="text" id="search-keyword" placeholder="検索キーワード（内容）" style="flex:2;">
+        <input type="text" id="search-id" placeholder="学籍番号（任意）" style="flex:1;">
+        <button id="search-btn" type="button" class="btn-blue" style="padding: 8px 15px;">検索</button>
+      </div>
+      <div id="search-results-area">
+        <hr>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <p id="search-status" style="margin:5px 0; font-size:0.9em; color:#666;"></p>
+          <button id="close-search-btn" type="button" class="btn-secondary" style="padding:2px 10px; font-size:11px;">結果を閉じる</button>
+        </div>
+        <div id="search-table-container"></div>
+      </div>
     </div>
 
     <div class="box">
       <div style="display: flex; justify-content: space-between; align-items: center;">
-        <p style="margin:0; font-weight: bold;">過去の講義（アーカイブ）</p>
+        <p style="margin:0; font-weight: bold;">講義リスト</p>
         <div style="display: flex; gap: 10px;">
-          <button id="load-archive-btn" type="button" class="btn-secondary" style="padding: 6px 12px;">講義リストを表示</button>
-          <button id="summary-attendance-btn" type="button" class="btn-blue" style="padding: 6px 12px; font-size: 12px;">学期総括出席表を出力</button>
+          <button id="load-archive-btn" type="button" class="btn-secondary" style="padding: 6px 12px;">リストを表示</button>
+          <button id="summary-attendance-btn" type="button" class="btn-blue" style="padding: 6px 12px; font-size: 12px;">学期総括出席表(CSV)</button>
         </div>
       </div>
       <div id="archive-list-area"></div>
@@ -73,8 +90,8 @@
       <hr>
       <div id="questions-container">質問を待っています…</div>
       <div style="text-align: right; margin-top: 20px;">
-        <span id="user-info" style="font-size: 12px; color: #666;"></span>
-        <button id="logout-btn" type="button" class="btn-secondary" style="margin-left: 10px; padding: 4px 10px;">ログアウト</button>
+        <span id="user-info" style="font-size: 11px; color: #999;"></span>
+        <button id="logout-btn" type="button" class="btn-secondary" style="margin-left: 10px; padding: 4px 10px; font-size: 11px;">ログアウト</button>
       </div>
     </div>
   </div>
@@ -110,20 +127,12 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = filename; a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
+      document.body.appendChild(a); a.click();
       setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 150);
     }
 
     const loginBtn = document.getElementById('login-btn');
-    loginBtn.onclick = async () => {
-      try {
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        document.getElementById('login-error').innerText = "ログインに失敗しました。";
-      }
-    };
-
+    loginBtn.onclick = async () => { try { await signInWithPopup(auth, provider); } catch (e) { document.getElementById('login-error').innerText = "ログイン失敗"; } };
     document.getElementById('logout-btn').onclick = () => { signOut(auth); location.reload(); };
 
     onAuthStateChanged(auth, (user) => {
@@ -132,17 +141,9 @@
         document.getElementById('dashboard-section').style.display = 'block';
         document.getElementById('user-info').innerText = user.email;
         onValue(ref(db, 'active_session'), (snap) => {
-          const val = snap.val();
-          if (val) {
-            document.getElementById('active-label').innerText = val.label;
-            currentSession = val.label;
-            startMonitoring(val.label);
-          }
+          const val = snap.val(); if (val) { document.getElementById('active-label').innerText = val.label; currentSession = val.label; startMonitoring(val.label); }
         });
-      } else if (user) {
-        alert("教員用アカウントでログインしてください。");
-        signOut(auth);
-      }
+      } else if (user) { alert("権限なし"); signOut(auth); }
     });
 
     function startMonitoring(label) {
@@ -162,9 +163,58 @@
       let card = document.getElementById(`q-${key}`);
       if (!card) { card = document.createElement('div'); card.id = `q-${key}`; c.prepend(card); }
       card.className = `question-card ${data.answered ? 'answered' : ''}`;
-      card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:16px; margin-top:5px; white-space:pre-wrap;">${data.content}</div>`;
+      card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:15px; margin-top:5px; white-space:pre-wrap;">${data.content}</div>`;
     }
 
+    // --- 検索機能ロジック ---
+    const searchBtn = document.getElementById('search-btn');
+    const searchArea = document.getElementById('search-results-area');
+    
+    searchBtn.onclick = async () => {
+      const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
+      const targetId = document.getElementById('search-id').value.trim();
+      if (!keyword && !targetId) return alert("キーワードか学籍番号を入力してください。");
+
+      searchBtn.disabled = true;
+      searchBtn.innerText = "検索中...";
+      
+      const snap = await get(ref(db, 'questions'));
+      const allQuestions = snap.val();
+      const results = [];
+
+      if (allQuestions) {
+        Object.keys(allQuestions).forEach(sessionName => {
+          Object.keys(allQuestions[sessionName]).forEach(qKey => {
+            const q = allQuestions[sessionName][qKey];
+            const contentMatch = !keyword || q.content.toLowerCase().includes(keyword);
+            const idMatch = !targetId || q.studentId.includes(targetId);
+            if (contentMatch && idMatch) {
+              results.push({ ...q, session: sessionName.replace(/_/g, ".") });
+            }
+          });
+        });
+      }
+
+      if (results.length === 0) {
+        document.getElementById('search-status').innerText = "該当する質問は見つかりませんでした。";
+        document.getElementById('search-table-container').innerHTML = "";
+      } else {
+        document.getElementById('search-status').innerText = `${results.length} 件の質問が見つかりました。`;
+        let html = "<table><thead><tr><th>講義</th><th>学籍番号</th><th>氏名</th><th>内容</th></tr></thead><tbody>";
+        results.sort((a,b) => b.timestamp - a.timestamp).forEach(r => {
+          html += `<tr><td>${r.session}</td><td>${r.studentId}</td><td>${r.studentName}</td><td style="white-space:pre-wrap;">${r.content}</td></tr>`;
+        });
+        document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
+      }
+
+      searchArea.style.display = 'block';
+      searchBtn.disabled = false;
+      searchBtn.innerText = "検索";
+    };
+
+    document.getElementById('close-search-btn').onclick = () => { searchArea.style.display = 'none'; };
+
+    // --- 既存機能の維持 ---
     window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
     window.toggleAction = (name) => { const el = document.getElementById(`actions-${name}`); el.style.display = el.style.display === 'block' ? 'none' : 'block'; };
 
@@ -174,21 +224,19 @@
       let csv = (type === 'attendance') ? "学籍番号,氏名,日付,時刻\n" : "日付,時刻,学籍番号,氏名,内容,対応状況\n";
       if (type === 'attendance') {
         Object.keys(data).sort().forEach(id => {
-          const d = new Date(data[id].timestamp);
-          csv += `"${id}","${data[id].studentName}","${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}"\n`;
+          const d = new Date(data[id].timestamp); csv += `"${id}","${data[id].studentName}","${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}"\n`;
         });
       } else {
         Object.keys(data).forEach(k => {
-          const q = data[k]; const d = new Date(q.timestamp);
-          csv += `"${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}","${q.studentId}","${q.studentName}","${q.content.replace(/"/g,'""')}","${q.answered?'済':'未'}"\n`;
+          const q = data[k]; const d = new Date(q.timestamp); csv += `"${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}","${q.studentId}","${q.studentName}","${q.content.replace(/"/g,'""')}","${q.answered?'済':'未'}"\n`;
         });
       }
       downloadFile(`${type}_${sessionName}.csv`, csv);
     };
 
     window.deleteSession = async (name) => {
-      if (confirm(`講義「${name}」を削除します会？`)) {
-        if (confirm(`本当に削除しますか？対象：${name}`)) {
+      if (confirm(`講義「${name}」を完全に削除しますか？`)) {
+        if (confirm(`【最終確認】この操作は取り消せません。本当に削除しますか？\n対象：${name}`)) {
           await remove(ref(db, `attendance/${name}`)); await remove(ref(db, `questions/${name}`));
           alert("削除完了"); if (document.getElementById('archive-list-area').style.display === 'block') loadArchive(true);
         }
@@ -207,7 +255,7 @@
     async function loadArchive(silent = false) {
       const snap = await get(ref(db, 'attendance'));
       const d = snap.val();
-      if (!d) { archiveArea.innerHTML = "<p style='color:#999;'>データなし</p>"; }
+      if (!d) { archiveArea.innerHTML = "<p style='color:#999; text-align:center;'>データなし</p>"; }
       else {
         let html = "<table><thead><tr><th>講義名</th><th>操作</th></tr></thead><tbody>";
         Object.keys(d).sort().reverse().forEach(n => {
@@ -219,7 +267,7 @@
     }
 
     loadArchiveBtn.onclick = async () => {
-      if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; loadArchiveBtn.innerText = '講義リストを表示'; }
+      if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; loadArchiveBtn.innerText = 'リストを表示'; }
       else { await loadArchive(); }
     };
 
