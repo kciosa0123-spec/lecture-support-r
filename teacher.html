@@ -166,7 +166,7 @@
       card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:15px; margin-top:5px; white-space:pre-wrap;">${data.content}</div>`;
     }
 
-    // --- 検索機能ロジック ---
+    // --- 検索機能ロジック (エラー修正済み) ---
     const searchBtn = document.getElementById('search-btn');
     const searchArea = document.getElementById('search-results-area');
     
@@ -186,8 +186,12 @@
         Object.keys(allQuestions).forEach(sessionName => {
           Object.keys(allQuestions[sessionName]).forEach(qKey => {
             const q = allQuestions[sessionName][qKey];
-            const contentMatch = !keyword || q.content.toLowerCase().includes(keyword);
-            const idMatch = !targetId || q.studentId.includes(targetId);
+            // 安全策: データが存在しない場合に備えてデフォルト値を設定
+            const content = q.content || "";
+            const studentId = q.studentId || "";
+            
+            const contentMatch = !keyword || content.toLowerCase().includes(keyword);
+            const idMatch = !targetId || studentId.includes(targetId);
             if (contentMatch && idMatch) {
               results.push({ ...q, session: sessionName.replace(/_/g, ".") });
             }
@@ -214,7 +218,7 @@
 
     document.getElementById('close-search-btn').onclick = () => { searchArea.style.display = 'none'; };
 
-    // --- 既存機能の維持 ---
+    // --- 既存機能 ---
     window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
     window.toggleAction = (name) => { const el = document.getElementById(`actions-${name}`); el.style.display = el.style.display === 'block' ? 'none' : 'block'; };
 
