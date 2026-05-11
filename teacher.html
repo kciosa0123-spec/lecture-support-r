@@ -16,12 +16,23 @@
     .btn-success { background: #28a745; }
     .btn-danger { background: #dc3545; }
     .btn-secondary { background: #6c757d; }
+    
+    /* 【復元】フィルターボタン用スタイル */
+    .btn-outline { background: #fff; color: #666; border: 1px solid #ccc; padding: 5px 15px; }
+    .btn-outline.active { background: #666; color: #fff; border-color: #666; }
+    
     table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
     th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
     th { background: #f8f9fa; }
     .archive-actions { display: none; margin-top: 10px; background: #f1f3f4; padding: 10px; border-radius: 4px; }
+    
+    /* 質問カードのスタイル */
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 14px; margin-bottom: 12px; border-radius: 6px; }
-    .question-card.answered { border-left-color: #28a745; opacity: 0.7; }
+    .question-card.answered { border-left-color: #28a745; opacity: 0.5; }
+    
+    /* 【復元】フィルターロジック：親要素に hide-answered がある時、済(answered)を隠す */
+    #questions-container.hide-answered .answered { display: none; }
+
     #archive-list-area, #search-results-area { display: none; }
     .search-box { display: flex; gap: 10px; margin-bottom: 10px; }
   </style>
@@ -81,7 +92,13 @@
 
     <div class="box">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-        <div style="font-weight: bold;">本日の出席: <span id="attendance-count" style="color:#28a745; font-size:1.5em;">0</span> 名</div>
+        <div style="display: flex; align-items: center; gap: 15px;">
+          <span style="font-weight: bold;">本日の出席: <span id="attendance-count" style="color:#28a745; font-size:1.5em;">0</span> 名</span>
+          <div style="display: flex; gap: 5px;">
+            <button id="filter-all-btn" class="btn-outline active" style="padding:4px 10px; font-size:11px;">すべて</button>
+            <button id="filter-unanswered-btn" class="btn-outline" style="padding:4px 10px; font-size:11px;">未対応のみ</button>
+          </div>
+        </div>
         <button id="toggle-list-btn" type="button" class="btn-secondary" style="padding: 5px 12px;">名簿を表示</button>
       </div>
       <div id="attendance-list-container" style="display:none;">
@@ -115,11 +132,28 @@
     const auth = getAuth(app);
     const db = getDatabase(app);
     const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
+    provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp", prompt: 'select_account' });
 
     const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
     document.getElementById('inp-date').valueAsDate = new Date();
     let currentSession = "";
+
+    // 【復元】フィルター切り替えロジック
+    const qContainer = document.getElementById('questions-container');
+    const filterAllBtn = document.getElementById('filter-all-btn');
+    const filterUnansweredBtn = document.getElementById('filter-unanswered-btn');
+
+    filterAllBtn.onclick = () => {
+      qContainer.classList.remove('hide-answered');
+      filterAllBtn.classList.add('active');
+      filterUnansweredBtn.classList.remove('active');
+    };
+
+    filterUnansweredBtn.onclick = () => {
+      qContainer.classList.add('hide-answered');
+      filterUnansweredBtn.classList.add('active');
+      filterAllBtn.classList.remove('active');
+    };
 
     function downloadFile(filename, csv) {
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
@@ -133,7 +167,7 @@
 
     const loginBtn = document.getElementById('login-btn');
     loginBtn.onclick = async () => { try { await signInWithPopup(auth, provider); } catch (e) { document.getElementById('login-error').innerText = "ログイン失敗"; } };
-    document.getElementById('logout-btn').onclick = () => { signOut(auth); location.reload(); };
+    document.getElementById('logout-btn').onclick = () => { signOut(auth).then(() => location.reload()); };
 
     onAuthStateChanged(auth, (user) => {
       if (user && user.email === TEACHER_EMAIL) {
@@ -158,67 +192,52 @@
     }
 
     function renderQuestion(key, data) {
-      const c = document.getElementById('questions-container');
-      if (c.innerText.includes("待っています")) c.innerHTML = "";
+      if (qContainer.innerText.includes("待っています")) qContainer.innerHTML = "";
       let card = document.getElementById(`q-${key}`);
-      if (!card) { card = document.createElement('div'); card.id = `q-${key}`; c.prepend(card); }
+      if (!card) { card = document.createElement('div'); card.id = `q-${key}`; qContainer.prepend(card); }
       card.className = `question-card ${data.answered ? 'answered' : ''}`;
-      card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:15px; margin-top:5px; white-space:pre-wrap;">${data.content}</div>`;
+      card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:15px; margin-top:5px; white-space:pre-wrap;">${data.content || ""}</div>`;
     }
 
-    // --- 検索機能ロジック (エラー修正済み) ---
+    // --- 検索機能 ---
     const searchBtn = document.getElementById('search-btn');
     const searchArea = document.getElementById('search-results-area');
-    
     searchBtn.onclick = async () => {
       const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
       const targetId = document.getElementById('search-id').value.trim();
       if (!keyword && !targetId) return alert("キーワードか学籍番号を入力してください。");
-
-      searchBtn.disabled = true;
-      searchBtn.innerText = "検索中...";
-      
+      searchBtn.disabled = true; searchBtn.innerText = "検索中...";
       const snap = await get(ref(db, 'questions'));
       const allQuestions = snap.val();
       const results = [];
-
       if (allQuestions) {
-        Object.keys(allQuestions).forEach(sessionName => {
-          Object.keys(allQuestions[sessionName]).forEach(qKey => {
-            const q = allQuestions[sessionName][qKey];
-            // 安全策: データが存在しない場合に備えてデフォルト値を設定
-            const content = q.content || "";
-            const studentId = q.studentId || "";
-            
-            const contentMatch = !keyword || content.toLowerCase().includes(keyword);
-            const idMatch = !targetId || studentId.includes(targetId);
-            if (contentMatch && idMatch) {
-              results.push({ ...q, session: sessionName.replace(/_/g, ".") });
+        Object.keys(allQuestions).forEach(sName => {
+          Object.keys(allQuestions[sName]).forEach(qKey => {
+            const q = allQuestions[sName][qKey];
+            const content = (q.content || "").toLowerCase();
+            const sid = (q.studentId || "");
+            if ((!keyword || content.includes(keyword)) && (!targetId || sid.includes(targetId))) {
+              results.push({ ...q, session: sName.replace(/_/g, ".") });
             }
           });
         });
       }
-
       if (results.length === 0) {
-        document.getElementById('search-status').innerText = "該当する質問は見つかりませんでした。";
+        document.getElementById('search-status').innerText = "見つかりませんでした。";
         document.getElementById('search-table-container').innerHTML = "";
       } else {
-        document.getElementById('search-status').innerText = `${results.length} 件の質問が見つかりました。`;
-        let html = "<table><thead><tr><th>講義</th><th>学籍番号</th><th>氏名</th><th>内容</th></tr></thead><tbody>";
+        document.getElementById('search-status').innerText = `${results.length} 件見つかりました。`;
+        let html = "<table><thead><tr><th>講義</th><th>学籍番号</th><th>内容</th></tr></thead><tbody>";
         results.sort((a,b) => b.timestamp - a.timestamp).forEach(r => {
-          html += `<tr><td>${r.session}</td><td>${r.studentId}</td><td>${r.studentName}</td><td style="white-space:pre-wrap;">${r.content}</td></tr>`;
+          html += `<tr><td>${r.session}</td><td>${r.studentId}</td><td style="white-space:pre-wrap;">${r.content}</td></tr>`;
         });
         document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
       }
-
-      searchArea.style.display = 'block';
-      searchBtn.disabled = false;
-      searchBtn.innerText = "検索";
+      searchArea.style.display = 'block'; searchBtn.disabled = false; searchBtn.innerText = "検索";
     };
-
     document.getElementById('close-search-btn').onclick = () => { searchArea.style.display = 'none'; };
 
-    // --- 既存機能 ---
+    // --- 各種操作 ---
     window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
     window.toggleAction = (name) => { const el = document.getElementById(`actions-${name}`); el.style.display = el.style.display === 'block' ? 'none' : 'block'; };
 
@@ -232,17 +251,17 @@
         });
       } else {
         Object.keys(data).forEach(k => {
-          const q = data[k]; const d = new Date(q.timestamp); csv += `"${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}","${q.studentId}","${q.studentName}","${q.content.replace(/"/g,'""')}","${q.answered?'済':'未'}"\n`;
+          const q = data[k]; const d = new Date(q.timestamp); csv += `"${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}","${q.studentId}","${q.studentName}","${(q.content || "").replace(/"/g,'""')}","${q.answered?'済':'未'}"\n`;
         });
       }
       downloadFile(`${type}_${sessionName}.csv`, csv);
     };
 
     window.deleteSession = async (name) => {
-      if (confirm(`講義「${name}」を完全に削除しますか？`)) {
-        if (confirm(`【最終確認】この操作は取り消せません。本当に削除しますか？\n対象：${name}`)) {
+      if (confirm(`「${name}」を完全に削除しますか？`)) {
+        if (confirm(`【最終確認】対象：${name}`)) {
           await remove(ref(db, `attendance/${name}`)); await remove(ref(db, `questions/${name}`));
-          alert("削除完了"); if (document.getElementById('archive-list-area').style.display === 'block') loadArchive(true);
+          alert("削除完了"); if (archiveArea.style.display === 'block') loadArchive(true);
         }
       }
     };
@@ -255,7 +274,6 @@
 
     const loadArchiveBtn = document.getElementById('load-archive-btn');
     const archiveArea = document.getElementById('archive-list-area');
-
     async function loadArchive(silent = false) {
       const snap = await get(ref(db, 'attendance'));
       const d = snap.val();
@@ -263,13 +281,12 @@
       else {
         let html = "<table><thead><tr><th>講義名</th><th>操作</th></tr></thead><tbody>";
         Object.keys(d).sort().reverse().forEach(n => {
-          html += `<tr><td>${n}</td><td><button type="button" onclick="window.toggleAction('${n}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">CSV作成</button><button type="button" onclick="window.deleteSession('${n}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button><div id="actions-${n}" class="archive-actions"><button type="button" onclick="window.downloadArchive('attendance', '${n}')" class="btn-success" style="font-size:11px;">出席者情報</button><button type="button" onclick="window.downloadArchive('questions', '${n}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">コメントのデータ</button></div></td></tr>`;
+          html += `<tr><td>${n}</td><td><button type="button" onclick="window.toggleAction('${n}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">CSV作成</button><button type="button" onclick="window.deleteSession('${n}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button><div id="actions-${n}" class="archive-actions"><button type="button" onclick="window.downloadArchive('attendance', '${n}')" class="btn-success" style="font-size:11px;">出席者</button><button type="button" onclick="window.downloadArchive('questions', '${n}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">コメント</button></div></td></tr>`;
         });
         archiveArea.innerHTML = html + "</tbody></table>";
       }
       if (!silent) { archiveArea.style.display = 'block'; loadArchiveBtn.innerText = 'リストを隠す'; }
     }
-
     loadArchiveBtn.onclick = async () => {
       if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; loadArchiveBtn.innerText = 'リストを表示'; }
       else { await loadArchive(); }
