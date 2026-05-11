@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>教員用ダッシュボード（龍谷大学）</title>
+  <title>教員ダッシュボード（龍谷大・完全版）</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; line-height: 1.6; }
     h2 { color: #333; }
@@ -13,32 +13,29 @@
     button { color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; transition: 0.3s; }
     .btn-blue { background: #4285f4; }
     .btn-warning { background: #ffc107; color: #333; font-weight: bold; }
-    .btn-success { background: #28a745; }
+    .btn-success { background: #28a745; } /* 講義中用の緑 */
     .btn-danger { background: #dc3545; }
     .btn-secondary { background: #6c757d; }
     
-    /* 【復元】フィルターボタン用スタイル */
+    /* フィルターボタン用 */
     .btn-outline { background: #fff; color: #666; border: 1px solid #ccc; padding: 5px 15px; }
     .btn-outline.active { background: #666; color: #fff; border-color: #666; }
     
-    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
-    th { background: #f8f9fa; }
-    .archive-actions { display: none; margin-top: 10px; background: #f1f3f4; padding: 10px; border-radius: 4px; }
-    
-    /* 質問カードのスタイル */
+    /* 質問カード表示制御 */
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 14px; margin-bottom: 12px; border-radius: 6px; }
     .question-card.answered { border-left-color: #28a745; opacity: 0.5; }
-    
-    /* 【復元】フィルターロジック：親要素に hide-answered がある時、済(answered)を隠す */
     #questions-container.hide-answered .answered { display: none; }
 
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; }
+    .archive-actions { display: none; margin-top: 10px; background: #f1f3f4; padding: 10px; border-radius: 4px; }
     #archive-list-area, #search-results-area { display: none; }
     .search-box { display: flex; gap: 10px; margin-bottom: 10px; }
   </style>
 </head>
 <body>
-  <h2>教員用：講義支援・アーカイブ管理</h2>
+  <h2>教員用：講義支援・アーカイブ管理（龍谷大）</h2>
 
   <div id="login-section" class="box" style="text-align: center; padding: 40px;">
     <button id="login-btn" type="button" class="btn-blue" style="font-size: 18px;">Googleでログイン</button>
@@ -47,7 +44,7 @@
 
   <div id="dashboard-section" style="display:none;">
     <div class="box" style="border-left: 4px solid #ffc107;">
-      <p style="margin: 0 0 10px 0; font-weight: bold;">今日の講義セッション設定</p>
+      <p style="margin: 0 0 10px 0; font-weight: bold;">講義セッション設定</p>
       <div class="session-grid">
         <div><label>曜日</label><select id="sel-day"><option>月</option><option>火</option><option>水</option><option>木</option><option selected>金</option><option>土</option></select></div>
         <div><label>時限</label><select id="sel-period"><option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
@@ -58,33 +55,26 @@
         <div><label>回数</label><input type="number" id="inp-count" value="1"></div>
         <div><label>日付</label><input type="date" id="inp-date"></div>
       </div>
-      <button id="set-session-btn" type="button" class="btn-warning">講義を開始（切替）</button>
-      <span style="margin-left:15px; font-size:0.9em; color:#666;">接続先: <b id="active-label" style="color:#333;">未設定</b></span>
+      <button id="set-session-btn" type="button" class="btn-warning">講義を開始</button>
+      <span style="margin-left:15px; font-size:0.9em; color:#666;">接続中: <b id="active-label">未設定</b></span>
     </div>
 
     <div class="box" style="border-left: 4px solid #17a2b8;">
-      <p style="margin:0 0 10px 0; font-weight: bold;">過去データの検索・整理</p>
+      <p style="margin:0 0 10px 0; font-weight: bold;">過去データの検索</p>
       <div class="search-box">
-        <input type="text" id="search-keyword" placeholder="検索キーワード（内容）" style="flex:2;">
-        <input type="text" id="search-id" placeholder="学籍番号（任意）" style="flex:1;">
-        <button id="search-btn" type="button" class="btn-blue" style="padding: 8px 15px;">検索</button>
+        <input type="text" id="search-keyword" placeholder="キーワード（内容）" style="flex:2;">
+        <input type="text" id="search-id" placeholder="学籍番号" style="flex:1;">
+        <button id="search-btn" type="button" class="btn-blue">検索</button>
       </div>
-      <div id="search-results-area">
-        <hr>
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <p id="search-status" style="margin:5px 0; font-size:0.9em; color:#666;"></p>
-          <button id="close-search-btn" type="button" class="btn-secondary" style="padding:2px 10px; font-size:11px;">結果を閉じる</button>
-        </div>
-        <div id="search-table-container"></div>
-      </div>
+      <div id="search-results-area"><hr><div id="search-table-container"></div><button id="close-search-btn" class="btn-secondary" style="margin-top:10px;">閉じる</button></div>
     </div>
 
     <div class="box">
       <div style="display: flex; justify-content: space-between; align-items: center;">
-        <p style="margin:0; font-weight: bold;">講義リスト</p>
+        <p style="margin:0; font-weight: bold;">講義アーカイブ</p>
         <div style="display: flex; gap: 10px;">
-          <button id="load-archive-btn" type="button" class="btn-secondary" style="padding: 6px 12px;">リストを表示</button>
-          <button id="summary-attendance-btn" type="button" class="btn-blue" style="padding: 6px 12px; font-size: 12px;">学期総括出席表(CSV)</button>
+          <button id="load-archive-btn" class="btn-secondary">リストを表示</button>
+          <button id="summary-attendance-btn" class="btn-blue" style="font-size: 12px;">学期総括出席表</button>
         </div>
       </div>
       <div id="archive-list-area"></div>
@@ -93,13 +83,13 @@
     <div class="box">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
         <div style="display: flex; align-items: center; gap: 15px;">
-          <span style="font-weight: bold;">本日の出席: <span id="attendance-count" style="color:#28a745; font-size:1.5em;">0</span> 名</span>
+          <span style="font-weight: bold;">本日の質問</span>
           <div style="display: flex; gap: 5px;">
             <button id="filter-all-btn" class="btn-outline active" style="padding:4px 10px; font-size:11px;">すべて</button>
             <button id="filter-unanswered-btn" class="btn-outline" style="padding:4px 10px; font-size:11px;">未対応のみ</button>
           </div>
         </div>
-        <button id="toggle-list-btn" type="button" class="btn-secondary" style="padding: 5px 12px;">名簿を表示</button>
+        <div style="font-weight: bold;">出席: <span id="attendance-count" style="color:#28a745;">0</span> 名 <button id="toggle-list-btn" class="btn-secondary" style="padding: 2px 10px; font-size: 11px; margin-left:10px;">名簿</button></div>
       </div>
       <div id="attendance-list-container" style="display:none;">
         <table><thead><tr><th>学籍番号</th><th>氏名</th><th>時刻</th></tr></thead><tbody id="attendance-list-body"></tbody></table>
@@ -135,39 +125,16 @@
     provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp", prompt: 'select_account' });
 
     const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
-    document.getElementById('inp-date').valueAsDate = new Date();
     let currentSession = "";
+    document.getElementById('inp-date').valueAsDate = new Date();
 
-    // 【復元】フィルター切り替えロジック
+    // フィルターロジック
     const qContainer = document.getElementById('questions-container');
     const filterAllBtn = document.getElementById('filter-all-btn');
     const filterUnansweredBtn = document.getElementById('filter-unanswered-btn');
 
-    filterAllBtn.onclick = () => {
-      qContainer.classList.remove('hide-answered');
-      filterAllBtn.classList.add('active');
-      filterUnansweredBtn.classList.remove('active');
-    };
-
-    filterUnansweredBtn.onclick = () => {
-      qContainer.classList.add('hide-answered');
-      filterUnansweredBtn.classList.add('active');
-      filterAllBtn.classList.remove('active');
-    };
-
-    function downloadFile(filename, csv) {
-      const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-      const blob = new Blob([bom, csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = filename; a.style.display = 'none';
-      document.body.appendChild(a); a.click();
-      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 150);
-    }
-
-    const loginBtn = document.getElementById('login-btn');
-    loginBtn.onclick = async () => { try { await signInWithPopup(auth, provider); } catch (e) { document.getElementById('login-error').innerText = "ログイン失敗"; } };
-    document.getElementById('logout-btn').onclick = () => { signOut(auth).then(() => location.reload()); };
+    filterAllBtn.onclick = () => { qContainer.classList.remove('hide-answered'); filterAllBtn.classList.add('active'); filterUnansweredBtn.classList.remove('active'); };
+    filterUnansweredBtn.onclick = () => { qContainer.classList.add('hide-answered'); filterUnansweredBtn.classList.add('active'); filterAllBtn.classList.remove('active'); };
 
     onAuthStateChanged(auth, (user) => {
       if (user && user.email === TEACHER_EMAIL) {
@@ -175,7 +142,20 @@
         document.getElementById('dashboard-section').style.display = 'block';
         document.getElementById('user-info').innerText = user.email;
         onValue(ref(db, 'active_session'), (snap) => {
-          const val = snap.val(); if (val) { document.getElementById('active-label').innerText = val.label; currentSession = val.label; startMonitoring(val.label); }
+          const val = snap.val();
+          if (val) {
+            currentSession = val.label;
+            const labelEl = document.getElementById('active-label');
+            labelEl.innerText = val.label;
+            labelEl.style.color = "#28a745"; // 文字を緑に
+            
+            const btn = document.getElementById('set-session-btn');
+            btn.innerText = "講義中（切替可）";
+            btn.classList.remove('btn-warning');
+            btn.classList.add('btn-success'); // ボタンを緑に
+            
+            startMonitoring(val.label);
+          }
         });
       } else if (user) { alert("権限なし"); signOut(auth); }
     });
@@ -196,113 +176,69 @@
       let card = document.getElementById(`q-${key}`);
       if (!card) { card = document.createElement('div'); card.id = `q-${key}`; qContainer.prepend(card); }
       card.className = `question-card ${data.answered ? 'answered' : ''}`;
-      card.innerHTML = `<div>[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px;">${data.answered?'済':'未'}</button></div><div style="font-size:15px; margin-top:5px; white-space:pre-wrap;">${data.content || ""}</div>`;
+      card.innerHTML = `<div style="font-size:12px; color:#666;">[${data.studentId}] ${data.studentName} <button type="button" onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px; border-radius:4px;">${data.answered?'済':'未'}</button></div><div style="font-size:15px; margin-top:5px; white-space:pre-wrap;">${data.content || ""}</div>`;
     }
 
-    // --- 検索機能 ---
-    const searchBtn = document.getElementById('search-btn');
-    const searchArea = document.getElementById('search-results-area');
-    searchBtn.onclick = async () => {
-      const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
-      const targetId = document.getElementById('search-id').value.trim();
-      if (!keyword && !targetId) return alert("キーワードか学籍番号を入力してください。");
-      searchBtn.disabled = true; searchBtn.innerText = "検索中...";
-      const snap = await get(ref(db, 'questions'));
-      const allQuestions = snap.val();
-      const results = [];
-      if (allQuestions) {
-        Object.keys(allQuestions).forEach(sName => {
-          Object.keys(allQuestions[sName]).forEach(qKey => {
-            const q = allQuestions[sName][qKey];
-            const content = (q.content || "").toLowerCase();
-            const sid = (q.studentId || "");
-            if ((!keyword || content.includes(keyword)) && (!targetId || sid.includes(targetId))) {
-              results.push({ ...q, session: sName.replace(/_/g, ".") });
-            }
-          });
-        });
-      }
-      if (results.length === 0) {
-        document.getElementById('search-status').innerText = "見つかりませんでした。";
-        document.getElementById('search-table-container').innerHTML = "";
-      } else {
-        document.getElementById('search-status').innerText = `${results.length} 件見つかりました。`;
-        let html = "<table><thead><tr><th>講義</th><th>学籍番号</th><th>内容</th></tr></thead><tbody>";
-        results.sort((a,b) => b.timestamp - a.timestamp).forEach(r => {
-          html += `<tr><td>${r.session}</td><td>${r.studentId}</td><td style="white-space:pre-wrap;">${r.content}</td></tr>`;
-        });
-        document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
-      }
-      searchArea.style.display = 'block'; searchBtn.disabled = false; searchBtn.innerText = "検索";
-    };
-    document.getElementById('close-search-btn').onclick = () => { searchArea.style.display = 'none'; };
-
-    // --- 各種操作 ---
     window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
     window.toggleAction = (name) => { const el = document.getElementById(`actions-${name}`); el.style.display = el.style.display === 'block' ? 'none' : 'block'; };
-
-    window.downloadArchive = async (type, sessionName) => {
-      const snap = await get(ref(db, `${type}/${sessionName}`));
-      const data = snap.val(); if (!data) return alert("データなし");
-      let csv = (type === 'attendance') ? "学籍番号,氏名,日付,時刻\n" : "日付,時刻,学籍番号,氏名,内容,対応状況\n";
-      if (type === 'attendance') {
-        Object.keys(data).sort().forEach(id => {
-          const d = new Date(data[id].timestamp); csv += `"${id}","${data[id].studentName}","${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}"\n`;
-        });
-      } else {
-        Object.keys(data).forEach(k => {
-          const q = data[k]; const d = new Date(q.timestamp); csv += `"${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}","${q.studentId}","${q.studentName}","${(q.content || "").replace(/"/g,'""')}","${q.answered?'済':'未'}"\n`;
-        });
-      }
-      downloadFile(`${type}_${sessionName}.csv`, csv);
-    };
-
-    window.deleteSession = async (name) => {
-      if (confirm(`「${name}」を完全に削除しますか？`)) {
-        if (confirm(`【最終確認】対象：${name}`)) {
-          await remove(ref(db, `attendance/${name}`)); await remove(ref(db, `questions/${name}`));
-          alert("削除完了"); if (archiveArea.style.display === 'block') loadArchive(true);
-        }
-      }
-    };
 
     document.getElementById('set-session-btn').onclick = async () => {
       const d = new Date(document.getElementById('inp-date').value);
       const label = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value} 第${document.getElementById('inp-count').value}回(${d.getMonth()+1}/${d.getDate()})`;
-      await set(ref(db, 'active_session'), { label: label }); location.reload();
+      await set(ref(db, 'active_session'), { label: label });
+      location.reload();
     };
 
-    const loadArchiveBtn = document.getElementById('load-archive-btn');
-    const archiveArea = document.getElementById('archive-list-area');
-    async function loadArchive(silent = false) {
-      const snap = await get(ref(db, 'attendance'));
-      const d = snap.val();
-      if (!d) { archiveArea.innerHTML = "<p style='color:#999; text-align:center;'>データなし</p>"; }
+    // 検索・アーカイブ・出席表などの既存ロジック
+    document.getElementById('search-btn').onclick = async () => {
+      const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
+      const targetId = document.getElementById('search-id').value.trim();
+      if (!keyword && !targetId) return alert("条件を入力してください。");
+      const snap = await get(ref(db, 'questions')); const all = snap.val(); const results = [];
+      if (all) { Object.keys(all).forEach(s => { Object.keys(all[s]).forEach(qKey => { const q = all[s][qKey]; if ((!keyword || (q.content||"").toLowerCase().includes(keyword)) && (!targetId || (q.studentId||"").includes(targetId))) results.push({ ...q, session: s }); }); }); }
+      document.getElementById('search-status').innerText = `${results.length} 件発見。`;
+      let html = "<table><thead><tr><th>講義</th><th>番号</th><th>内容</th></tr></thead><tbody>";
+      results.sort((a,b) => b.timestamp - a.timestamp).forEach(r => { html += `<tr><td>${r.session}</td><td>${r.studentId}</td><td style="white-space:pre-wrap;">${r.content}</td></tr>`; });
+      document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
+      document.getElementById('search-results-area').style.display = 'block';
+    };
+
+    document.getElementById('load-archive-btn').onclick = async () => {
+      const archiveArea = document.getElementById('archive-list-area');
+      if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; document.getElementById('load-archive-btn').innerText = 'リストを表示'; return; }
+      const snap = await get(ref(db, 'attendance')); const d = snap.val();
+      if (!d) { archiveArea.innerHTML = "データなし"; }
       else {
         let html = "<table><thead><tr><th>講義名</th><th>操作</th></tr></thead><tbody>";
         Object.keys(d).sort().reverse().forEach(n => {
-          html += `<tr><td>${n}</td><td><button type="button" onclick="window.toggleAction('${n}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">CSV作成</button><button type="button" onclick="window.deleteSession('${n}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button><div id="actions-${n}" class="archive-actions"><button type="button" onclick="window.downloadArchive('attendance', '${n}')" class="btn-success" style="font-size:11px;">出席者</button><button type="button" onclick="window.downloadArchive('questions', '${n}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">コメント</button></div></td></tr>`;
+          html += `<tr><td>${n}</td><td><button type="button" onclick="window.toggleAction('${n}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">作成</button><button type="button" onclick="window.deleteSession('${n}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button><div id="actions-${n}" class="archive-actions"><button type="button" onclick="window.downloadArchive('attendance', '${n}')" class="btn-success" style="font-size:11px;">出席</button><button type="button" onclick="window.downloadArchive('questions', '${n}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">質問</button></div></td></tr>`;
         });
         archiveArea.innerHTML = html + "</tbody></table>";
       }
-      if (!silent) { archiveArea.style.display = 'block'; loadArchiveBtn.innerText = 'リストを隠す'; }
-    }
-    loadArchiveBtn.onclick = async () => {
-      if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; loadArchiveBtn.innerText = 'リストを表示'; }
-      else { await loadArchive(); }
+      archiveArea.style.display = 'block'; document.getElementById('load-archive-btn').innerText = '隠す';
     };
 
+    window.downloadArchive = async (type, sessionName) => {
+      const snap = await get(ref(db, `${type}/${sessionName}`)); const data = snap.val(); if (!data) return alert("データなし");
+      let csv = (type === 'attendance') ? "学籍番号,氏名,日付,時刻\n" : "日付,時刻,学籍番号,氏名,内容,対応状況\n";
+      const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+      if (type === 'attendance') { Object.keys(data).sort().forEach(id => { const d = new Date(data[id].timestamp); csv += `"${id}","${data[id].studentName}","${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}"\n`; }); }
+      else { Object.keys(data).forEach(k => { const q = data[k]; const d = new Date(q.timestamp); csv += `"${d.toLocaleDateString('ja-JP')}","${d.toLocaleTimeString('ja-JP')}","${q.studentId}","${q.studentName}","${(q.content || "").replace(/"/g,'""')}","${q.answered?'済':'未'}"\n`; }); }
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bom, csv], { type: 'text/csv' })); a.download = `${type}_${sessionName}.csv`; a.click();
+    };
+
+    window.deleteSession = async (n) => { if (confirm("削除しますか？")) { await remove(ref(db, `attendance/${n}`)); await remove(ref(db, `questions/${n}`)); location.reload(); } };
     document.getElementById('summary-attendance-btn').onclick = async () => {
-      const snap = await get(ref(db, 'attendance'));
-      const all = snap.val(); if (!all) return alert("データなし");
-      const map = {};
-      Object.keys(all).forEach(s => { Object.keys(all[s]).forEach(id => { if (!map[id]) map[id] = { name: all[s][id].studentName, count: 0 }; map[id].count++; }); });
-      let csv = "学籍番号,氏名,合計出席回数\n";
-      Object.keys(map).sort().forEach(id => { csv += `"${id}","${map[id].name}","${map[id].count}"\n`; });
-      downloadFile("学期総括出席表.csv", csv);
+      const snap = await get(ref(db, 'attendance')); const all = snap.val(); if (!all) return alert("なし");
+      const map = {}; Object.keys(all).forEach(s => { Object.keys(all[s]).forEach(id => { if (!map[id]) map[id] = { name: all[s][id].studentName, count: 0 }; map[id].count++; }); });
+      let csv = "学籍番号,氏名,回数\n"; Object.keys(map).sort().forEach(id => { csv += `"${id}","${map[id].name}","${map[id].count}"\n`; });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv' })); a.download = "総括出席表.csv"; a.click();
     };
 
+    document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
+    document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => location.reload());
     document.getElementById('toggle-list-btn').onclick = () => { const el = document.getElementById('attendance-list-container'); el.style.display = el.style.display === 'none' ? 'block' : 'none'; };
+    document.getElementById('close-search-btn').onclick = () => { document.getElementById('search-results-area').style.display = 'none'; };
   </script>
 </body>
 </html>
