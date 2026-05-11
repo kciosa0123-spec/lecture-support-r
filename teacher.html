@@ -3,35 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>教員ダッシュボード（龍谷大・完全版）</title>
+  <title>教員用ダッシュボード（龍谷大・完全版）</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; line-height: 1.6; }
     h2 { color: #333; }
     .box { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     .session-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 15px; }
     select, input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
-    button { color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; transition: 0.3s; }
+    button { color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; transition: 0.3s; font-weight: bold; }
     .btn-blue { background: #4285f4; }
-    .btn-warning { background: #ffc107; color: #333; font-weight: bold; }
-    .btn-success { background: #28a745; } /* 講義中用の緑 */
+    .btn-warning { background: #ffc107; color: #333; }
+    .btn-success { background: #28a745; }
     .btn-danger { background: #dc3545; }
     .btn-secondary { background: #6c757d; }
-    
-    /* フィルターボタン用 */
-    .btn-outline { background: #fff; color: #666; border: 1px solid #ccc; padding: 5px 15px; }
+    .btn-outline { background: #fff; color: #666; border: 1px solid #ccc; padding: 5px 15px; font-weight: normal; }
     .btn-outline.active { background: #666; color: #fff; border-color: #666; }
-    
-    /* 質問カード表示制御 */
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 14px; margin-bottom: 12px; border-radius: 6px; }
     .question-card.answered { border-left-color: #28a745; opacity: 0.5; }
     #questions-container.hide-answered .answered { display: none; }
-
     table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
     th { background: #f8f9fa; }
     .archive-actions { display: none; margin-top: 10px; background: #f1f3f4; padding: 10px; border-radius: 4px; }
-    #archive-list-area, #search-results-area { display: none; }
-    .search-box { display: flex; gap: 10px; margin-bottom: 10px; }
   </style>
 </head>
 <body>
@@ -55,29 +48,32 @@
         <div><label>回数</label><input type="number" id="inp-count" value="1"></div>
         <div><label>日付</label><input type="date" id="inp-date"></div>
       </div>
-      <button id="set-session-btn" type="button" class="btn-warning">講義を開始</button>
-      <span style="margin-left:15px; font-size:0.9em; color:#666;">接続中: <b id="active-label">未設定</b></span>
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <button id="set-session-btn" type="button" class="btn-warning">講義を開始</button>
+        <button id="end-session-btn" type="button" class="btn-danger" style="display: none;">講義を終了（リセット）</button>
+        <span style="font-size:0.9em; color:#666;">状態: <b id="active-label">未設定</b></span>
+      </div>
     </div>
 
     <div class="box" style="border-left: 4px solid #17a2b8;">
       <p style="margin:0 0 10px 0; font-weight: bold;">過去データの検索</p>
-      <div class="search-box">
-        <input type="text" id="search-keyword" placeholder="キーワード（内容）" style="flex:2;">
+      <div style="display:flex; gap:10px; margin-bottom:10px;">
+        <input type="text" id="search-keyword" placeholder="キーワード" style="flex:2;">
         <input type="text" id="search-id" placeholder="学籍番号" style="flex:1;">
         <button id="search-btn" type="button" class="btn-blue">検索</button>
       </div>
-      <div id="search-results-area"><hr><div id="search-table-container"></div><button id="close-search-btn" class="btn-secondary" style="margin-top:10px;">閉じる</button></div>
+      <div id="search-results-area" style="display:none;"><hr><div id="search-table-container"></div><button id="close-search-btn" class="btn-secondary" style="margin-top:10px;">閉じる</button></div>
     </div>
 
     <div class="box">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <p style="margin:0; font-weight: bold;">講義アーカイブ</p>
         <div style="display: flex; gap: 10px;">
-          <button id="load-archive-btn" class="btn-secondary">リストを表示</button>
-          <button id="summary-attendance-btn" class="btn-blue" style="font-size: 12px;">学期総括出席表</button>
+          <button id="load-archive-btn" class="btn-secondary" style="padding: 6px 12px; font-size:12px;">リストを表示</button>
+          <button id="summary-attendance-btn" class="btn-blue" style="padding: 6px 12px; font-size: 12px;">学期総括出席表</button>
         </div>
       </div>
-      <div id="archive-list-area"></div>
+      <div id="archive-list-area" style="display:none;"></div>
     </div>
 
     <div class="box">
@@ -89,13 +85,13 @@
             <button id="filter-unanswered-btn" class="btn-outline" style="padding:4px 10px; font-size:11px;">未対応のみ</button>
           </div>
         </div>
-        <div style="font-weight: bold;">出席: <span id="attendance-count" style="color:#28a745;">0</span> 名 <button id="toggle-list-btn" class="btn-secondary" style="padding: 2px 10px; font-size: 11px; margin-left:10px;">名簿</button></div>
+        <div style="font-weight: bold;">出席: <span id="attendance-count" style="color:#28a745; font-size:1.2em;">0</span> 名 <button id="toggle-list-btn" class="btn-secondary" style="padding: 2px 10px; font-size: 11px; margin-left:10px;">名簿</button></div>
       </div>
       <div id="attendance-list-container" style="display:none;">
         <table><thead><tr><th>学籍番号</th><th>氏名</th><th>時刻</th></tr></thead><tbody id="attendance-list-body"></tbody></table>
       </div>
       <hr>
-      <div id="questions-container">質問を待っています…</div>
+      <div id="questions-container">講義を開始してください。</div>
       <div style="text-align: right; margin-top: 20px;">
         <span id="user-info" style="font-size: 11px; color: #999;"></span>
         <button id="logout-btn" type="button" class="btn-secondary" style="margin-left: 10px; padding: 4px 10px; font-size: 11px;">ログアウト</button>
@@ -128,37 +124,68 @@
     let currentSession = "";
     document.getElementById('inp-date').valueAsDate = new Date();
 
-    // フィルターロジック
     const qContainer = document.getElementById('questions-container');
-    const filterAllBtn = document.getElementById('filter-all-btn');
-    const filterUnansweredBtn = document.getElementById('filter-unanswered-btn');
-
-    filterAllBtn.onclick = () => { qContainer.classList.remove('hide-answered'); filterAllBtn.classList.add('active'); filterUnansweredBtn.classList.remove('active'); };
-    filterUnansweredBtn.onclick = () => { qContainer.classList.add('hide-answered'); filterUnansweredBtn.classList.add('active'); filterAllBtn.classList.remove('active'); };
+    const startBtn = document.getElementById('set-session-btn');
+    const endBtn = document.getElementById('end-session-btn');
+    const labelEl = document.getElementById('active-label');
 
     onAuthStateChanged(auth, (user) => {
       if (user && user.email === TEACHER_EMAIL) {
         document.getElementById('login-section').style.display = 'none';
         document.getElementById('dashboard-section').style.display = 'block';
         document.getElementById('user-info').innerText = user.email;
+        
         onValue(ref(db, 'active_session'), (snap) => {
           const val = snap.val();
           if (val) {
             currentSession = val.label;
-            const labelEl = document.getElementById('active-label');
-            labelEl.innerText = val.label;
-            labelEl.style.color = "#28a745"; // 文字を緑に
-            
-            const btn = document.getElementById('set-session-btn');
-            btn.innerText = "講義中（切替可）";
-            btn.classList.remove('btn-warning');
-            btn.classList.add('btn-success'); // ボタンを緑に
-            
+            labelEl.innerText = "講義中：" + val.label;
+            labelEl.style.color = "#28a745";
+            startBtn.innerText = "講義情報を更新";
+            startBtn.classList.remove('btn-warning');
+            startBtn.classList.add('btn-success');
+            endBtn.style.display = "inline-block";
             startMonitoring(val.label);
+          } else {
+            currentSession = "";
+            labelEl.innerText = "未設定";
+            labelEl.style.color = "#666";
+            startBtn.innerText = "講義を開始";
+            startBtn.classList.remove('btn-success');
+            startBtn.classList.add('btn-warning');
+            endBtn.style.display = "none";
+            qContainer.innerHTML = "講義を開始してください。";
+            document.getElementById('attendance-count').innerText = "0";
           }
         });
       } else if (user) { alert("権限なし"); signOut(auth); }
     });
+
+    startBtn.onclick = async () => {
+      const d = new Date(document.getElementById('inp-date').value);
+      const label = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value} 第${document.getElementById('inp-count').value}回(${d.getMonth()+1}/${d.getDate()})`;
+      await set(ref(db, 'active_session'), { label: label });
+      alert("講義を開始しました。");
+    };
+
+    endBtn.onclick = async () => {
+      if (confirm("現在の講義セッションを終了しますか？\n（学生側の画面も待機状態に戻ります）")) {
+        await remove(ref(db, 'active_session'));
+        location.reload();
+      }
+    };
+
+    // フィルタボタン
+    document.getElementById('filter-all-btn').onclick = function() {
+      qContainer.classList.remove('hide-answered');
+      this.classList.add('active');
+      document.getElementById('filter-unanswered-btn').classList.remove('active');
+    };
+    document.getElementById('filter-unanswered-btn').onclick = function() {
+      qContainer.classList.add('hide-answered');
+      this.classList.add('active');
+      document.getElementById('filter-all-btn').classList.remove('active');
+    };
 
     function startMonitoring(label) {
       const path = label.replace(/[.#$/[\]]/g, "_");
@@ -172,7 +199,7 @@
     }
 
     function renderQuestion(key, data) {
-      if (qContainer.innerText.includes("待っています")) qContainer.innerHTML = "";
+      if (qContainer.innerText.includes("開始してください")) qContainer.innerHTML = "";
       let card = document.getElementById(`q-${key}`);
       if (!card) { card = document.createElement('div'); card.id = `q-${key}`; qContainer.prepend(card); }
       card.className = `question-card ${data.answered ? 'answered' : ''}`;
@@ -181,15 +208,8 @@
 
     window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
     window.toggleAction = (name) => { const el = document.getElementById(`actions-${name}`); el.style.display = el.style.display === 'block' ? 'none' : 'block'; };
-
-    document.getElementById('set-session-btn').onclick = async () => {
-      const d = new Date(document.getElementById('inp-date').value);
-      const label = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value} 第${document.getElementById('inp-count').value}回(${d.getMonth()+1}/${d.getDate()})`;
-      await set(ref(db, 'active_session'), { label: label });
-      location.reload();
-    };
-
-    // 検索・アーカイブ・出席表などの既存ロジック
+    
+    // 検索・アーカイブ
     document.getElementById('search-btn').onclick = async () => {
       const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
       const targetId = document.getElementById('search-id').value.trim();
@@ -202,20 +222,21 @@
       document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
       document.getElementById('search-results-area').style.display = 'block';
     };
+    document.getElementById('close-search-btn').onclick = () => { document.getElementById('search-results-area').style.display = 'none'; };
 
     document.getElementById('load-archive-btn').onclick = async () => {
       const archiveArea = document.getElementById('archive-list-area');
-      if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; document.getElementById('load-archive-btn').innerText = 'リストを表示'; return; }
+      if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; return; }
       const snap = await get(ref(db, 'attendance')); const d = snap.val();
       if (!d) { archiveArea.innerHTML = "データなし"; }
       else {
         let html = "<table><thead><tr><th>講義名</th><th>操作</th></tr></thead><tbody>";
         Object.keys(d).sort().reverse().forEach(n => {
-          html += `<tr><td>${n}</td><td><button type="button" onclick="window.toggleAction('${n}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">作成</button><button type="button" onclick="window.deleteSession('${n}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button><div id="actions-${n}" class="archive-actions"><button type="button" onclick="window.downloadArchive('attendance', '${n}')" class="btn-success" style="font-size:11px;">出席</button><button type="button" onclick="window.downloadArchive('questions', '${n}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">質問</button></div></td></tr>`;
+          html += `<tr><td>${n}</td><td><button type="button" onclick="window.toggleAction('${n}')" class="btn-blue" style="padding:4px 8px; font-size:12px;">CSV</button><button type="button" onclick="window.deleteSession('${n}')" class="btn-danger" style="padding:4px 8px; font-size:12px; margin-left:5px;">削除</button><div id="actions-${n}" class="archive-actions"><button type="button" onclick="window.downloadArchive('attendance', '${n}')" class="btn-success" style="font-size:11px;">出席</button><button type="button" onclick="window.downloadArchive('questions', '${n}')" class="btn-secondary" style="font-size:11px; margin-left:5px;">質問</button></div></td></tr>`;
         });
         archiveArea.innerHTML = html + "</tbody></table>";
       }
-      archiveArea.style.display = 'block'; document.getElementById('load-archive-btn').innerText = '隠す';
+      archiveArea.style.display = 'block';
     };
 
     window.downloadArchive = async (type, sessionName) => {
@@ -227,18 +248,18 @@
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bom, csv], { type: 'text/csv' })); a.download = `${type}_${sessionName}.csv`; a.click();
     };
 
-    window.deleteSession = async (n) => { if (confirm("削除しますか？")) { await remove(ref(db, `attendance/${n}`)); await remove(ref(db, `questions/${n}`)); location.reload(); } };
+    window.deleteSession = async (n) => { if (confirm("完全に削除しますか？")) { await remove(ref(db, `attendance/${n}`)); await remove(ref(db, `questions/${n}`)); location.reload(); } };
+    
     document.getElementById('summary-attendance-btn').onclick = async () => {
       const snap = await get(ref(db, 'attendance')); const all = snap.val(); if (!all) return alert("なし");
       const map = {}; Object.keys(all).forEach(s => { Object.keys(all[s]).forEach(id => { if (!map[id]) map[id] = { name: all[s][id].studentName, count: 0 }; map[id].count++; }); });
-      let csv = "学籍番号,氏名,回数\n"; Object.keys(map).sort().forEach(id => { csv += `"${id}","${map[id].name}","${map[id].count}"\n`; });
-      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv' })); a.download = "総括出席表.csv"; a.click();
+      let csv = "学籍番号,氏名,合計出席\n"; Object.keys(map).sort().forEach(id => { csv += `"${id}","${map[id].name}","${map[id].count}"\n`; });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv' })); a.download = "学期総括出席表.csv"; a.click();
     };
 
     document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
     document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => location.reload());
     document.getElementById('toggle-list-btn').onclick = () => { const el = document.getElementById('attendance-list-container'); el.style.display = el.style.display === 'none' ? 'block' : 'none'; };
-    document.getElementById('close-search-btn').onclick = () => { document.getElementById('search-results-area').style.display = 'none'; };
   </script>
 </body>
 </html>
