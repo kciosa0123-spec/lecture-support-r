@@ -90,7 +90,7 @@
       if (!currentSafePath) return;
       const snapshot = await get(ref(db, `attendance/${currentSafePath}/${studentId}`));
       if (snapshot.exists()) {
-        attendanceBtn.innerText = "出席済み";
+        attendanceBtn.innerText = "出席済み (Submitted)";
         attendanceBtn.classList.add('submitted');
         attendanceBtn.disabled = true;
       } else {
