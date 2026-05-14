@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>教員用ダッシュボード（龍谷大・アーカイブ対応版）</title>
+  <title>教員ダッシュボード（龍谷大・真完全版）</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; line-height: 1.6; }
     h2 { color: #333; }
@@ -19,10 +19,8 @@
     .btn-outline { background: #fff; color: #666; border: 1px solid #ccc; padding: 5px 15px; font-weight: normal; }
     .btn-outline.active { background: #666; color: #fff; border-color: #666; }
     
-    /* 講義リスト・アーカイブ用 */
     #archive-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    .archive-item { background: #e8f0fe; color: #1967d2; padding: 5px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; border: 1px solid #d2e3fc; }
-    .archive-item:hover { background: #d2e3fc; }
+    .archive-item { background: #e8f0fe; color: #1967d2; padding: 5px 12px; border-radius: 20px; font-size: 11px; cursor: pointer; border: 1px solid #d2e3fc; }
     .archive-item.selected { background: #1967d2; color: #fff; }
 
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 14px; margin-bottom: 12px; border-radius: 6px; }
@@ -45,12 +43,11 @@
     <div class="box" style="border-left: 4px solid #ffc107;">
       <div style="display: flex; justify-content: space-between; align-items: start;">
         <p style="margin: 0 0 10px 0; font-weight: bold;">講義セッション設定</p>
-        <button id="load-history-btn" class="btn-secondary" style="padding: 4px 12px; font-size: 11px;">講義リスト(履歴)を読込</button>
+        <button id="toggle-history-btn" class="btn-secondary" style="padding: 4px 12px; font-size: 11px;">講義リスト(履歴)を表示</button>
       </div>
       
       <div id="archive-area" style="display:none; margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-        <span style="font-size: 11px; color: #666;">過去の講義を選択すると、下の名簿と質問が切り替わります：</span>
-        <div id="archive-list"></div>
+        <div id="archive-list">履歴を取得中...</div>
       </div>
 
       <div class="session-grid">
@@ -70,13 +67,12 @@
       </div>
     </div>
 
-    <div class="box" style="border-left: 4px solid #17a2b8;">
-      <p style="margin:0 0 10px 0; font-weight: bold;">アーカイブ検索</p>
-      <div style="display:flex; gap:10px; margin-bottom:10px;">
-        <input type="text" id="search-keyword" placeholder="学籍番号、氏名、質問内容で検索" style="flex:2;">
-        <button id="search-btn" type="button" class="btn-blue">検索</button>
+    <div class="box" id="data-ops-area" style="display:none; background: #fffde7; border-color: #fdd835;">
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <span style="font-weight: bold; font-size: 14px;">表示中の講義データを操作:</span>
+        <button id="export-csv-btn" class="btn-success" style="padding: 6px 15px; font-size: 12px;">CSV出力</button>
+        <button id="delete-session-btn" class="btn-danger" style="padding: 6px 15px; font-size: 12px;">この回を削除</button>
       </div>
-      <div id="search-results-area" style="display:none;"><hr><div id="search-table-container"></div><button id="close-search-btn" class="btn-secondary" style="margin-top:10px;">閉じる</button></div>
     </div>
 
     <div class="box">
@@ -136,7 +132,6 @@
     let viewingSessionId = "";
     let activeSessionId = "";
 
-    // プルダウン初期化
     const selCount = document.getElementById('sel-count');
     for(let i=1;i<=15;i++){ const opt=document.createElement('option'); opt.value=i; opt.innerText=`第${i}回`; selCount.appendChild(opt); }
     const lastCount = localStorage.getItem('ryukoku_last_count');
@@ -153,31 +148,24 @@
         document.getElementById('dashboard-section').style.display = 'block';
         document.getElementById('user-info').innerText = user.email;
         
-        // リアルタイムで開講状態を監視
         onValue(ref(db, 'active_session'), (snap) => {
           const val = snap.val();
-          const startBtn = document.getElementById('set-session-btn');
-          const endBtn = document.getElementById('end-session-btn');
-          const labelEl = document.getElementById('active-label');
-
           if (val && val.isOpen) {
             activeSessionId = val.id;
-            // 他のアーカイブを見ていなければ、自動的に今の講義を表示
-            if (!viewingSessionId || viewingSessionId === activeSessionId) {
-              selectSession(val.id, val.title);
-            }
-            startBtn.innerText = "情報を更新"; startBtn.className = "btn-success";
-            endBtn.style.display = "inline-block";
+            if (!viewingSessionId || viewingSessionId === activeSessionId) selectSession(val.id, val.title);
+            document.getElementById('set-session-btn').innerText = "情報を更新";
+            document.getElementById('set-session-btn').className = "btn-success";
+            document.getElementById('end-session-btn').style.display = "inline-block";
           } else {
             activeSessionId = "";
-            startBtn.innerText = "講義を開始"; startBtn.className = "btn-warning";
-            endBtn.style.display = "none";
+            document.getElementById('set-session-btn').innerText = "講義を開始";
+            document.getElementById('set-session-btn').className = "btn-warning";
+            document.getElementById('end-session-btn').style.display = "none";
           }
         });
       }
     });
 
-    // 講義切替メインロジック
     function selectSession(id, title) {
       if (viewingSessionId) {
         off(ref(db, `attendance/${viewingSessionId}`));
@@ -186,21 +174,31 @@
       viewingSessionId = id;
       document.getElementById('active-label').innerText = title || id;
       document.getElementById('questions-container').innerHTML = "";
+      document.getElementById('data-ops-area').style.display = 'block';
       startMonitoring(id);
     }
 
-    // 講義リスト(履歴)の読み込み
-    document.getElementById('load-history-btn').onclick = async () => {
+    // --- 講義リストのトグル(開閉) ---
+    document.getElementById('toggle-history-btn').onclick = async () => {
       const area = document.getElementById('archive-area');
+      const btn = document.getElementById('toggle-history-btn');
+      if (area.style.display === 'none') {
+        area.style.display = 'block';
+        btn.innerText = '講義リスト(履歴)を隠す';
+        loadArchiveList();
+      } else {
+        area.style.display = 'none';
+        btn.innerText = '講義リスト(履歴)を表示';
+      }
+    };
+
+    async function loadArchiveList() {
       const list = document.getElementById('archive-list');
-      area.style.display = 'block';
-      list.innerHTML = "読み込み中...";
-      
+      list.innerHTML = "読込中...";
       const snap = await get(ref(db, 'attendance'));
       const data = snap.val() || {};
-      const ids = Object.keys(data).sort().reverse(); // 新しい順
-      
-      list.innerHTML = "";
+      const ids = Object.keys(data).sort().reverse();
+      list.innerHTML = ids.length ? "" : "履歴はありません。";
       ids.forEach(id => {
         const item = document.createElement('div');
         item.className = `archive-item ${id === viewingSessionId ? 'selected' : ''}`;
@@ -212,9 +210,53 @@
         };
         list.appendChild(item);
       });
+    }
+
+    // --- CSV出力 ---
+    document.getElementById('export-csv-btn').onclick = async () => {
+      if (!viewingSessionId) return;
+      const [attSnap, qSnap] = await Promise.all([
+        get(ref(db, `attendance/${viewingSessionId}`)),
+        get(ref(db, `questions/${viewingSessionId}`))
+      ]);
+      
+      let csv = "\uFEFF種別,学籍番号,氏名/メール,内容,時刻\n";
+      const atts = attSnap.val() || {};
+      Object.values(atts).forEach(a => {
+        csv += `出席,${a.studentId},${a.name},---,${new Date(a.timestamp).toLocaleString()}\n`;
+      });
+      const qs = qSnap.val() || {};
+      Object.values(qs).forEach(q => {
+        csv += `質問,---,${q.email},"${q.text.replace(/"/g, '""')}",${new Date(q.timestamp).toLocaleString()}\n`;
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `lecture_${viewingSessionId}.csv`;
+      link.click();
     };
 
-    startBtn.onclick = async () => {
+    // --- データ削除 ---
+    document.getElementById('delete-session-btn').onclick = async () => {
+      if (!confirm(`【警告】講義回「${viewingSessionId}」のデータを完全に削除しますか？\nこの操作は取り消せません。`)) return;
+      if (!confirm(`本当によろしいですか？出席名簿もすべて消去されます。`)) return;
+
+      try {
+        await Promise.all([
+          remove(ref(db, `attendance/${viewingSessionId}`)),
+          remove(ref(db, `questions/${viewingSessionId}`))
+        ]);
+        // もし削除したのが開講中のセッションなら終了させる
+        if (viewingSessionId === activeSessionId) await remove(ref(db, 'active_session'));
+        
+        alert("削除しました。");
+        location.reload();
+      } catch (e) { alert("削除失敗: " + e.message); }
+    };
+
+    // (以下、開始・終了・監視ロジックは以前と同じ)
+    document.getElementById('set-session-btn').onclick = async () => {
       const dStr = document.getElementById('inp-date').value.replace(/-/g, "");
       const title = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value}第${selCount.value}回`;
       const id = `${dStr}_${title}`;
@@ -223,11 +265,8 @@
       selectSession(id, title);
     };
 
-    endBtn.onclick = async () => {
-      if (confirm("講義を終了しますか？")) {
-        await remove(ref(db, 'active_session'));
-        location.reload();
-      }
+    document.getElementById('end-session-btn').onclick = async () => {
+      if (confirm("講義を終了しますか？")) { await remove(ref(db, 'active_session')); location.reload(); }
     };
 
     function startMonitoring(sessionId) {
@@ -248,55 +287,18 @@
       let card = document.getElementById(`q-${key}`);
       if (!card) { card = document.createElement('div'); card.id = `q-${key}`; qContainer.prepend(card); }
       card.className = `question-card ${data.answered ? 'answered' : ''}`;
-      card.innerHTML = `
-        <div style="font-size:12px; color:#666;"><small>${data.email}</small> 
-        <button onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px; border-radius:4px;">${data.answered?'済':'未'}</button></div>
-        <div style="font-weight:bold; margin-top:5px; white-space:pre-wrap;">${data.text}</div>`;
+      card.innerHTML = `<div style="font-size:12px; color:#666;"><small>${data.email}</small> <button onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px; border-radius:4px;">${data.answered?'済':'未'}</button></div><div style="font-weight:bold; margin-top:5px; white-space:pre-wrap;">${data.text}</div>`;
     }
 
     window.toggleQ = (key, val) => update(ref(db, `questions/${viewingSessionId}/${key}`), { answered: val });
-
     document.getElementById('toggle-list-btn').onclick = () => {
       const el = document.getElementById('attendance-list-container');
       const isHidden = el.style.display === 'none';
       el.style.display = isHidden ? 'block' : 'none';
       document.getElementById('toggle-list-btn').innerText = isHidden ? '名簿を隠す' : '名簿を表示';
     };
-
-    // 万能検索
-    document.getElementById('search-btn').onclick = async () => {
-      const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
-      if (!keyword) return alert("キーワードを入力してください。");
-      const sBtn = document.getElementById('search-btn');
-      sBtn.disabled = true;
-      const [attSnap, qSnap] = await Promise.all([get(ref(db, 'attendance')), get(ref(db, 'questions'))]);
-      const allAtt = attSnap.val() || {}; const allQ = qSnap.val() || {}; const results = [];
-      Object.keys(allAtt).forEach(sid => {
-        Object.keys(allAtt[sid]).forEach(uid => {
-          const a = allAtt[sid][uid];
-          const combined = (a.email + (a.name||"") + (a.studentId||"")).toLowerCase();
-          if (combined.includes(keyword)) results.push({ type: "出席", session: sid, name: a.name, text: "---", timestamp: a.timestamp });
-        });
-      });
-      Object.keys(allQ).forEach(sid => {
-        Object.keys(allQ[sid]).forEach(qid => {
-          const q = allQ[sid][qid];
-          if ((q.email + (q.text||"")).toLowerCase().includes(keyword)) results.push({ type: "質問", session: sid, name: q.email, text: q.text, timestamp: q.timestamp });
-        });
-      });
-      results.sort((a, b) => b.timestamp - a.timestamp);
-      let html = "<table><thead><tr><th>種別</th><th>講義ID</th><th>対象</th><th>内容</th></tr></thead><tbody>";
-      results.forEach(r => { html += `<tr><td>${r.type}</td><td style="font-size:10px;">${r.session}</td><td>${r.name||'-'}</td><td>${r.text}</td></tr>`; });
-      document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
-      document.getElementById('search-results-area').style.display = 'block';
-      sBtn.disabled = false;
-    };
-
-    document.getElementById('close-search-btn').onclick = () => document.getElementById('search-results-area').style.display = 'none';
     document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
     document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => location.reload());
-    document.getElementById('filter-all-btn').onclick = function() { qContainer.classList.remove('hide-answered'); this.classList.add('active'); document.getElementById('filter-unanswered-btn').classList.remove('active'); };
-    document.getElementById('filter-unanswered-btn').onclick = function() { qContainer.classList.add('hide-answered'); this.classList.add('active'); document.getElementById('filter-all-btn').classList.remove('active'); };
   </script>
 </body>
 </html>
