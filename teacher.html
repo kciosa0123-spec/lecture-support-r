@@ -81,4 +81,152 @@
       <div id="questions-container">講義を開始してください。</div>
       <div style="text-align: right; margin-top: 20px;">
         <span id="user-info" style="font-size: 11px; color: #999;"></span>
-        <button id
+        <button id="logout-btn" type="button" class="btn-secondary" style="margin-left: 10px; padding: 4px 10px; font-size: 11px;">ログアウト</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+    import { getDatabase, ref, set, get, onValue, onChildAdded, onChildChanged, update, remove } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
+    // 龍谷大学用のConfig
+    const firebaseConfig = {
+      apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
+      authDomain: "lecture-support.firebaseapp.com",
+      databaseURL: "https://lecture-support-default-rtdb.firebaseio.com",
+      projectId: "lecture-support",
+      storageBucket: "lecture-support.firebasestorage.app",
+      messagingSenderId: "285290664467",
+      appId: "1:285290664467:web:b39a07bbb08da6fc45a5e6"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp", prompt: 'select_account' });
+
+    const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
+    let currentSessionId = "";
+
+    // 回数プルダウン
+    const selCount = document.getElementById('sel-count');
+    for (let i = 1; i <= 15; i++) {
+      const opt = document.createElement('option');
+      opt.value = i; opt.innerText = `第${i}回`;
+      selCount.appendChild(opt);
+    }
+    const lastCount = localStorage.getItem('ryukoku_last_count');
+    if (lastCount) selCount.value = lastCount;
+
+    // 日付・曜日
+    const now = new Date();
+    document.getElementById('inp-date').valueAsDate = now;
+    const dayIdx = now.getDay();
+    document.getElementById('sel-day').selectedIndex = (dayIdx === 0) ? 0 : dayIdx - 1;
+
+    const qContainer = document.getElementById('questions-container');
+    const startBtn = document.getElementById('set-session-btn');
+    const endBtn = document.getElementById('end-session-btn');
+    const labelEl = document.getElementById('active-label');
+
+    onAuthStateChanged(auth, (user) => {
+      if (user && user.email === TEACHER_EMAIL) {
+        document.getElementById('login-section').style.display = 'none';
+        document.getElementById('dashboard-section').style.display = 'block';
+        document.getElementById('user-info').innerText = user.email;
+        onValue(ref(db, 'active_session'), (snap) => {
+          const val = snap.val();
+          if (val && val.isOpen) {
+            currentSessionId = val.id;
+            labelEl.innerText = "講義中：" + val.title;
+            labelEl.style.color = "#28a745";
+            startBtn.innerText = "情報を更新";
+            startBtn.className = "btn-success";
+            endBtn.style.display = "inline-block";
+            startMonitoring(val.id);
+          } else {
+            labelEl.innerText = "未設定";
+            labelEl.style.color = "#666";
+            startBtn.innerText = "講義を開始";
+            startBtn.className = "btn-warning";
+            endBtn.style.display = "none";
+            qContainer.innerHTML = "講義を開始してください。";
+          }
+        });
+      }
+    });
+
+    startBtn.onclick = async () => {
+      const dStr = document.getElementById('inp-date').value.replace(/-/g, "");
+      const title = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value}第${selCount.value}回`;
+      const id = `${dStr}_${title}`;
+      localStorage.setItem('ryukoku_last_count', selCount.value);
+      await set(ref(db, 'active_session'), { id: id, title: title, isOpen: true });
+      alert("講義を開始しました。");
+    };
+
+    endBtn.onclick = async () => {
+      if (confirm("講義を終了しますか？")) {
+        await update(ref(db, 'active_session'), { isOpen: false });
+        location.reload();
+      }
+    };
+
+    function startMonitoring(sessionId) {
+      onValue(ref(db, `attendance/${sessionId}`), (s) => {
+        document.getElementById('attendance-count').innerText = Object.keys(s.val() || {}).length;
+      });
+      onChildAdded(ref(db, `questions/${sessionId}`), (s) => renderQuestion(s.key, s.val()));
+      onChildChanged(ref(db, `questions/${sessionId}`), (s) => renderQuestion(s.key, s.val()));
+    }
+
+    function renderQuestion(key, data) {
+      if (qContainer.innerText.includes("開始")) qContainer.innerHTML = "";
+      let card = document.getElementById(`q-${key}`);
+      if (!card) { card = document.createElement('div'); card.id = `q-${key}`; qContainer.prepend(card); }
+      card.className = `question-card ${data.answered ? 'answered' : ''}`;
+      card.innerHTML = `<div><small>${data.email}</small> <button onclick="window.toggleQ('${key}', ${!data.answered})" style="background:${data.answered?'#28a745':'#ffc107'}; color:${data.answered?'#fff':'#333'}; float:right; padding:2px 8px; font-size:11px; border-radius:4px;">${data.answered?'済':'未'}</button></div><div style="font-weight:bold; margin-top:5px; white-space:pre-wrap;">${data.text}</div>`;
+    }
+
+    window.toggleQ = (key, val) => update(ref(db, `questions/${currentSessionId}/${key}`), { answered: val });
+
+    document.getElementById('search-btn').onclick = async () => {
+      const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
+      if (!keyword) return alert("検索キーワードを入力してください。");
+      const sBtn = document.getElementById('search-btn');
+      sBtn.disabled = true; sBtn.innerText = "検索中...";
+      const [attSnap, qSnap] = await Promise.all([get(ref(db, 'attendance')), get(ref(db, 'questions'))]);
+      const allAtt = attSnap.val() || {}; const allQ = qSnap.val() || {}; const results = [];
+      Object.keys(allAtt).forEach(sid => {
+        Object.keys(allAtt[sid]).forEach(uid => {
+          const a = allAtt[sid][uid];
+          if (a.email.includes(keyword)) results.push({ type: "出席", session: sid, email: a.email, text: "---", timestamp: a.timestamp });
+        });
+      });
+      Object.keys(allQ).forEach(sid => {
+        Object.keys(allQ[sid]).forEach(qid => {
+          const q = allQ[sid][qid];
+          if (q.email.includes(keyword) || q.text.toLowerCase().includes(keyword)) {
+            results.push({ type: "質問", session: sid, email: q.email, text: q.text, timestamp: q.timestamp });
+          }
+        });
+      });
+      results.sort((a, b) => b.timestamp - a.timestamp);
+      let html = "<table><thead><tr><th>種別</th><th>講義</th><th>メール</th><th>内容</th></tr></thead><tbody>";
+      results.forEach(r => { html += `<tr><td>${r.type}</td><td style="font-size:10px;">${r.session}</td><td>${r.email}</td><td>${r.text}</td></tr>`; });
+      document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
+      document.getElementById('search-results-area').style.display = 'block';
+      sBtn.disabled = false; sBtn.innerText = "検索";
+    };
+
+    document.getElementById('close-search-btn').onclick = () => document.getElementById('search-results-area').style.display = 'none';
+    document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
+    document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => location.reload());
+    document.getElementById('filter-all-btn').onclick = function() { qContainer.classList.remove('hide-answered'); this.classList.add('active'); document.getElementById('filter-unanswered-btn').classList.remove('active'); };
+    document.getElementById('filter-unanswered-btn').onclick = function() { qContainer.classList.add('hide-answered'); this.classList.add('active'); document.getElementById('filter-all-btn').classList.remove('active'); };
+  </script>
+</body>
+</html>
