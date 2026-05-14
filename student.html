@@ -37,7 +37,7 @@
     <p style="font-size: 0.8rem; color: #856404; margin-top:0;">初回のみ入力（次回から自動入力されます）</p>
     <label>学籍番号 (Student ID)</label>
     <input type="text" id="student-id" placeholder="例: A2X000X">
-    <label>氏名 (Name)</label>
+    <label>氏名 (Name) ※苗字と名前の間にスペース</label>
     <input type="text" id="student-name" placeholder="例: 龍谷 太郎">
   </div>
   
@@ -48,15 +48,15 @@
     </div>
 
     <div class="box">
-      <label>質問・コメント</label>
-      <textarea id="question-text" rows="3" placeholder="先生へのメッセージを入力"></textarea>
+      <label>質問・コメント (Message)</label>
+      <textarea id="question-text" rows="3" placeholder="メッセージを入力"></textarea>
       <button id="send-btn">メッセージを送信</button>
       <p id="send-status" class="status-msg" style="color: #34a853;"></p>
     </div>
   </div>
   
   <div style="text-align: center; margin-top: 20px;">
-    <button id="logout-btn" style="background: none; color: #888; font-size: 12px; text-decoration: underline; width: auto;">ログアウト</button>
+    <button id="logout-btn" style="background: none; color: #888; font-size: 12px; text-decoration: underline; width: auto;">ログアウト (Logout)</button>
   </div>
 </div>
 
@@ -91,11 +91,9 @@
         signOut(auth); return;
       }
       currentUser = user;
-      
       const emailLocalPart = user.email.split('@')[0].toUpperCase();
       document.getElementById('student-id').value = localStorage.getItem('ryu_student_id') || emailLocalPart;
       document.getElementById('student-name').value = localStorage.getItem('ryu_student_name') || "";
-      
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('main-section').classList.remove('hidden');
       monitorSession();
@@ -105,27 +103,22 @@
     }
   });
 
-  // --- 【追加】学籍番号・氏名欄でEnterキーを押した時も「出席」ボタンをクリックさせる ---
-  const handleEnter = (e) => {
-    if (e.key === 'Enter') document.getElementById('attendance-btn').click();
-  };
+  const handleEnter = (e) => { if (e.key === 'Enter') document.getElementById('attendance-btn').click(); };
   document.getElementById('student-id').addEventListener('keypress', handleEnter);
   document.getElementById('student-name').addEventListener('keypress', handleEnter);
 
   function monitorSession() {
     onValue(ref(db, 'active_session'), (snap) => {
       const val = snap.val();
-      const infoEl = document.getElementById('session-info');
-      const areaEl = document.getElementById('interactive-area');
       if (val && val.isOpen) {
         currentSessionId = val.id;
-        infoEl.innerText = "講義中：" + val.title;
-        areaEl.classList.remove('hidden');
+        document.getElementById('session-info').innerText = "講義中：" + val.title;
+        document.getElementById('interactive-area').classList.remove('hidden');
         checkAttendanceStatus();
       } else {
         currentSessionId = null;
-        infoEl.innerText = "教員による講義開始を待っています...";
-        areaEl.classList.add('hidden');
+        document.getElementById('session-info').innerText = "教員による講義開始を待っています...";
+        document.getElementById('interactive-area').classList.add('hidden');
       }
     });
   }
@@ -146,9 +139,21 @@
   }
 
   document.getElementById('attendance-btn').onclick = async () => {
-    const sid = document.getElementById('student-id').value.trim().toUpperCase();
-    const sname = document.getElementById('student-name').value.trim();
+    let sid = document.getElementById('student-id').value.trim().toUpperCase();
+    let sname = document.getElementById('student-name').value.trim();
+
     if (!sid || !sname) return alert("学籍番号と氏名を入力してください。");
+
+    // --- ✨【追加】スペース調整ロジック ---
+    // 全角スペースを半角に変換し、連続するスペースを1つにまとめる
+    sname = sname.replace(/[\s　]+/g, ' ');
+
+    // スペースが1つも含まれていない場合に警告（キャンセル可能）
+    if (!sname.includes(' ')) {
+      const confirmNoSpace = confirm("苗字と名前の間にスペースがありません。よろしいですか？\n（例：龍谷 太郎）");
+      if (!confirmNoSpace) return;
+    }
+
     if (document.getElementById('attendance-btn').disabled) return;
 
     try {
@@ -158,7 +163,7 @@
         uid: currentUser.uid, email: currentUser.email, studentId: sid, name: sname, timestamp: Date.now()
       });
       checkAttendanceStatus();
-    } catch (e) { alert("エラー: 送信に失敗しました。"); }
+    } catch (e) { alert("エラーが発生しました。"); }
   };
 
   document.getElementById('send-btn').onclick = async () => {
@@ -171,7 +176,7 @@
       document.getElementById('question-text').value = "";
       document.getElementById('send-status').innerText = "送信完了！";
       setTimeout(() => { document.getElementById('send-status').innerText = ""; }, 3000);
-    } catch (e) { alert("送信失敗しました。"); }
+    } catch (e) { alert("失敗しました。"); }
   };
 
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
