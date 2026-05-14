@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>教員ダッシュボード（龍谷大・タイムテーブル版）</title>
+  <title>教員ダッシュボード（龍谷大・カスタム時間割）</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f4f7f6; line-height: 1.6; }
     .box { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
@@ -12,20 +12,24 @@
     .day-column { background: #ebedef; padding: 15px; border-radius: 8px; }
     .day-title { font-weight: bold; text-align: center; margin-bottom: 15px; color: #444; border-bottom: 2px solid #ccc; padding-bottom: 5px; }
     
+    /* コマ（スロット）の配置 */
+    .period-slot { margin-bottom: 12px; min-height: 45px; }
+    .period-label { font-size: 10px; color: #888; margin-bottom: 2px; }
+    .empty-slot { border: 1px dashed #ccc; border-radius: 6px; height: 40px; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 11px; }
+
     /* 科目ボタン */
-    .subject-group { margin-bottom: 15px; }
-    .subject-btn { width: 100%; background: #fff; color: #333; border: 1px solid #bbb; padding: 10px; border-radius: 6px; text-align: left; font-size: 13px; cursor: pointer; transition: 0.2s; }
+    .subject-btn { width: 100%; background: #fff; color: #333; border: 1px solid #bbb; padding: 8px; border-radius: 6px; text-align: left; font-size: 12px; cursor: pointer; transition: 0.2s; font-weight: bold; }
     .subject-btn:hover { background: #f0f0f0; border-color: #4285f4; }
     .subject-btn.active { background: #4285f4; color: #fff; border-color: #4285f4; }
 
     /* 回数グリッド (1-15) */
-    .session-grid-mini { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 8px; padding: 5px; background: rgba(255,255,255,0.5); border-radius: 4px; display: none; }
-    .session-btn { background: #ddd; border: none; font-size: 10px; padding: 5px 0; border-radius: 3px; cursor: pointer; color: #666; }
-    .session-btn.has-data { background: #34a853; color: #fff; font-weight: bold; } /* データがある回は緑 */
-    .session-btn:hover { opacity: 0.8; }
-    .session-btn.selected { ring: 2px solid #000; outline: 2px solid #4285f4; }
+    .session-grid-mini { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 8px; padding: 8px; background: rgba(255,255,255,0.7); border-radius: 6px; border: 1px solid #dee2e6; display: none; }
+    .session-btn { background: #eee; border: 1px solid #ccc; font-size: 10px; padding: 5px 0; border-radius: 4px; cursor: pointer; color: #666; font-weight: bold; }
+    .session-btn.has-data { background: #34a853; color: #fff; border-color: #2d8a47; } /* データがある回は緑 */
+    .session-btn:hover { opacity: 0.8; transform: scale(1.05); }
+    .session-btn.selected { outline: 3px solid #ffc107; z-index: 1; }
 
-    /* その他UI要素 */
+    /* その他UI */
     button { color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
     .btn-blue { background: #4285f4; }
     .btn-warning { background: #ffc107; color: #333; }
@@ -68,24 +72,24 @@
     <div class="box" id="active-panel" style="border-top: 5px solid #4285f4;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
-          <span style="font-size: 12px; color: #666;">選択中:</span>
-          <h3 id="current-display-label" style="margin: 0;">講義を選択してください</h3>
+          <span style="font-size: 12px; color: #666;">選択中の講義:</span>
+          <h3 id="current-display-label" style="margin: 0;">科目と回数を選択してください</h3>
         </div>
         <div id="data-actions" class="hidden">
           <button id="export-csv-btn" class="btn-success">CSV出力</button>
-          <button id="delete-btn" class="btn-danger" style="margin-left:10px;">この回を削除</button>
+          <button id="delete-btn" class="btn-danger" style="margin-left:10px;">この回を完全に削除</button>
         </div>
         <div id="start-actions">
-          <button id="start-lecture-btn" class="btn-warning">この設定で講義を開始</button>
+          <button id="start-lecture-btn" class="btn-warning">この回で講義を開始</button>
           <button id="end-lecture-btn" class="btn-danger hidden">講義を終了</button>
         </div>
       </div>
     </div>
 
     <div class="box">
-      <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-        <div style="font-weight: bold;">出席者: <span id="att-count">0</span> 名</div>
-        <button id="toggle-list-btn" class="btn-secondary" style="padding: 4px 10px; font-size: 11px;">名簿を表示/非表示</button>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 10px; align-items: center;">
+        <div style="font-weight: bold;">出席者: <span id="att-count" style="color:#28a745; font-size:1.4em;">0</span> 名</div>
+        <button id="toggle-list-btn" class="btn-secondary" style="padding: 4px 12px; font-size: 11px;">名簿を表示/非表示</button>
       </div>
       <div id="att-list-container" class="hidden">
         <table>
@@ -94,11 +98,12 @@
         </table>
       </div>
       <hr>
-      <div id="questions-container"></div>
+      <div id="questions-container">講義を開始するか、過去の回数ボタンを押してください。</div>
     </div>
 
     <div style="text-align: right; margin-top: 20px;">
-      <button id="logout-btn" class="btn-secondary" style="font-size: 11px;">ログアウト</button>
+      <span id="user-info" style="font-size: 11px; color: #999; margin-right: 10px;"></span>
+      <button id="logout-btn" class="btn-secondary" style="font-size: 11px; padding: 4px 10px;">ログアウト</button>
     </div>
   </div>
 
@@ -125,11 +130,11 @@
 
   const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
   
-  // 先生の時間割データ
+  // --- 先生専用・時間割データ構成 ---
   const timetable = {
-    mon: ["英語総合3(B)", "英語総合3", "英語総合１(A)"],
-    tue: ["英語総合１(A)", "英語総合１(A)", "英語総合１(A)"],
-    fri: ["英語総合１(B)", "英語総合１(B)", "英語総合３", "英語総合３"]
+    mon: { 2: "英語総合１(A)", 3: "英語総合 2(A)", 4: "英語総合 ３" },
+    tue: { 1: "英語総合１(B)", 2: "英語総合 2(B)", 4: "英語総合 ４" },
+    fri: { 1: "英語総合3(B)", 2: "英語総合4(B)", 3: "英語総合１(C)", 4: "英語総合 2(C)" }
   };
 
   let currentSelectedSub = "";
@@ -137,78 +142,107 @@
   let viewingSessionId = "";
   let activeSessionId = "";
 
-  // UI生成：曜日・科目ボタン
+  // UI生成：時限ごとのスロット作成
   Object.keys(timetable).forEach(day => {
     const container = document.getElementById(`subjects-${day}`);
-    timetable[day].forEach(sub => {
-      const group = document.createElement('div');
-      group.className = 'subject-group';
-      group.innerHTML = `<button class="subject-btn" onclick="window.toggleSubject(this, '${day}', '${sub}')">${sub}</button>
-                         <div class="session-grid-mini" id="grid-${day}-${sub}"></div>`;
-      container.appendChild(group);
-      
-      // 1-15回のボタンを生成
-      const grid = group.querySelector('.session-grid-mini');
-      for(let i=1; i<=15; i++) {
-        const b = document.createElement('button');
-        b.className = 'session-btn';
-        b.innerText = i;
-        b.id = `btn-${day}-${sub}-${i}`;
-        b.onclick = () => window.loadSession(day, sub, i);
-        grid.appendChild(b);
+    for (let p = 1; p <= 4; p++) { // 1限〜4限まで表示
+      const slot = document.createElement('div');
+      slot.className = 'period-slot';
+      const label = document.createElement('div');
+      label.className = 'period-label';
+      label.innerText = `${p}限目`;
+      slot.appendChild(label);
+
+      if (timetable[day][p]) {
+        const sub = timetable[day][p];
+        const btn = document.createElement('button');
+        btn.className = 'subject-btn';
+        btn.innerText = sub;
+        btn.onclick = () => window.toggleSubject(btn, day, sub, p);
+        
+        const grid = document.createElement('div');
+        grid.className = 'session-grid-mini';
+        grid.id = `grid-${day}-${p}`;
+        
+        // 1-15回のボタン
+        for(let i=1; i<=15; i++) {
+          const b = document.createElement('button');
+          b.className = 'session-btn';
+          b.innerText = i;
+          b.id = `btn-${day}-${p}-${i}`;
+          b.onclick = (e) => { e.stopPropagation(); window.loadSession(day, sub, p, i); };
+          grid.appendChild(b);
+        }
+        
+        slot.appendChild(btn);
+        slot.appendChild(grid);
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'empty-slot';
+        empty.innerText = "なし";
+        slot.appendChild(empty);
       }
-    });
+      container.appendChild(slot);
+    }
   });
 
-  // 科目クリックで回数グリッドを表示
-  window.toggleSubject = (btn, day, sub) => {
+  window.toggleSubject = (btn, day, sub, p) => {
+    const targetGrid = document.getElementById(`grid-${day}-${p}`);
+    const isAlreadyOpen = targetGrid.style.display === 'grid';
+    
     document.querySelectorAll('.session-grid-mini').forEach(el => el.style.display = 'none');
     document.querySelectorAll('.subject-btn').forEach(el => el.classList.remove('active'));
-    const grid = document.getElementById(`grid-${day}-${sub}`);
-    grid.style.display = 'grid';
-    btn.classList.add('active');
-    currentSelectedSub = sub;
-    // データがある回を光らせるスキャン
-    scanDataPresence(day, sub);
+    
+    if (!isAlreadyOpen) {
+      targetGrid.style.display = 'grid';
+      btn.classList.add('active');
+      currentSelectedSub = sub;
+      scanDataPresence(day, sub, p);
+    }
   };
 
-  // どの回にデータがあるかDBをチェックして色を変える
-  async function scanDataPresence(day, sub) {
+  async function scanDataPresence(day, sub, p) {
     const snap = await get(ref(db, 'attendance'));
     const allAtt = snap.val() || {};
+    const dayName = {mon:"月", tue:"火", fri:"金"}[day];
+    
     for(let i=1; i<=15; i++) {
-      const possibleId = `ANYDATE_${day}${sub}第${i}回`; // IDの部分一致で探す
-      const found = Object.keys(allAtt).find(id => id.includes(`${day}`) && id.includes(`${sub}`) && id.includes(`第${i}回`));
-      const btn = document.getElementById(`btn-${day}-${sub}-${i}`);
+      // 部分一致で実施済みのIDを検索
+      const found = Object.keys(allAtt).find(id => id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`));
+      const btn = document.getElementById(`btn-${day}-${p}-${i}`);
       if(found) {
         btn.classList.add('has-data');
-        btn.dataset.actualId = found; // 本物のIDを保存
+        btn.dataset.actualId = found;
       }
     }
   }
 
-  // 特定の回をロード
-  window.loadSession = (day, sub, num) => {
-    const btn = document.getElementById(`btn-${day}-${sub}-${num}`);
-    const id = btn.dataset.actualId || `2026MMDD_${day}${sub}第${num}回`; // 未実施なら仮ID
+  window.loadSession = (day, sub, p, num) => {
+    const btn = document.getElementById(`btn-${day}-${p}-${num}`);
+    const dayName = {mon:"月", tue:"火", fri:"金"}[day];
+    const dStr = new Date().toISOString().slice(0,10).replace(/-/g,"");
+    
+    const id = btn.dataset.actualId || `${dStr}_${dayName}${p}${sub}第${num}回`;
     currentSelectedNum = num;
     viewingSessionId = id;
     
     document.querySelectorAll('.session-btn').forEach(el => el.classList.remove('selected'));
     btn.classList.add('selected');
     
-    document.getElementById('current-display-label').innerText = `${sub} 第${num}回`;
+    document.getElementById('current-display-label').innerText = `${dayName}曜${p}限：${sub} 【第${num}回】`;
     
     if(btn.classList.contains('has-data')) {
       document.getElementById('data-actions').classList.remove('hidden');
-      document.getElementById('start-lecture-btn').innerText = "データを更新（再開）";
+      document.getElementById('start-lecture-btn').innerText = "この回を再開/更新";
     } else {
       document.getElementById('data-actions').classList.add('hidden');
-      document.getElementById('start-lecture-btn').innerText = "この設定で講義を開始";
+      document.getElementById('start-lecture-btn').innerText = "この回で講義を開始";
     }
     
-    // 表示更新
-    if (viewingSessionId) off(ref(db, `attendance/${viewingSessionId}`));
+    if (viewingSessionId) {
+       off(ref(db, `attendance/${viewingSessionId}`));
+       off(ref(db, `questions/${viewingSessionId}`));
+    }
     startMonitoring(id);
   };
 
@@ -218,37 +252,23 @@
       document.getElementById('dashboard-section').classList.remove('hidden');
       document.getElementById('user-info').innerText = user.email;
       
-      // 開講中セッションの監視
       onValue(ref(db, 'active_session'), (snap) => {
         const val = snap.val();
         activeSessionId = val ? val.id : "";
-        const endBtn = document.getElementById('end-lecture-btn');
-        if(val && val.isOpen) {
-          endBtn.classList.remove('hidden');
-        } else {
-          endBtn.classList.add('hidden');
-        }
+        document.getElementById('end-lecture-btn').classList.toggle('hidden', !(val && val.isOpen));
       });
     }
   });
 
-  // 講義開始
   document.getElementById('start-lecture-btn').onclick = async () => {
-    if(!currentSelectedSub || !currentSelectedNum) return alert("講義と回数を選択してください。");
-    const dStr = new Date().toISOString().slice(0,10).replace(/-/g,"");
-    const dayName = document.querySelector('.subject-btn.active').parentElement.parentElement.querySelector('.day-title').innerText;
-    const dayKey = dayName.charAt(0);
-    const title = `${dayKey}${currentSelectedNum}${currentSelectedSub}第${currentSelectedNum}回`;
-    const id = `${dStr}_${title}`;
-    
-    await set(ref(db, 'active_session'), { id: id, title: title, isOpen: true });
-    alert("講義を開始しました。学生が送信可能になります。");
-    location.reload();
+    if(!viewingSessionId) return alert("科目と回数を選択してください。");
+    const label = document.getElementById('current-display-label').innerText;
+    await set(ref(db, 'active_session'), { id: viewingSessionId, title: label, isOpen: true });
+    alert("講義を開始しました。学生が送信可能になりました。");
   };
 
-  // 講義終了
   document.getElementById('end-lecture-btn').onclick = async () => {
-    if(confirm("講義を終了しますか？")) {
+    if(confirm("講義を終了します元。学生の画面を待機中に戻します。")) {
       await remove(ref(db, 'active_session'));
       location.reload();
     }
@@ -257,7 +277,8 @@
   function startMonitoring(sessionId) {
     const attBody = document.getElementById('att-list-body');
     const qCont = document.getElementById('questions-container');
-    
+    qCont.innerHTML = "読み込み中...";
+
     onValue(ref(db, `attendance/${sessionId}`), (s) => {
       const data = s.val() || {};
       const list = Object.values(data).sort((a,b) => (a.studentId||"").localeCompare(b.studentId||""));
@@ -267,14 +288,19 @@
 
     onValue(ref(db, `questions/${sessionId}`), (s) => {
       const data = s.val() || {};
-      qCont.innerHTML = Object.keys(data).reverse().map(key => {
+      const keys = Object.keys(data).reverse();
+      qCont.innerHTML = keys.length ? "" : "質問はまだありません。";
+      keys.forEach(key => {
         const q = data[key];
-        return `<div class="question-card ${q.answered?'answered':''}">
+        const card = document.createElement('div');
+        card.className = `question-card ${q.answered?'answered':''}`;
+        card.innerHTML = `
           <small>${q.email}</small>
-          <button onclick="window.toggleQ('${key}', ${!q.answered})" style="float:right; background:${q.answered?'#28a745':'#ffc107'}; color:${q.answered?'#fff':'#333'}; padding:2px 8px; font-size:11px;">${q.answered?'済':'未'}</button>
-          <div style="font-weight:bold; margin-top:5px;">${q.text}</div>
-        </div>`;
-      }).join('');
+          <button onclick="window.toggleQ('${key}', ${!q.answered})" style="float:right; background:${q.answered?'#28a745':'#ffc107'}; color:${q.answered?'#fff':'#333'}; padding:2px 8px; font-size:11px; border-radius:4px;">${q.answered?'済':'未'}</button>
+          <div style="font-weight:bold; margin-top:5px; white-space:pre-wrap;">${q.text}</div>
+        `;
+        qCont.appendChild(card);
+      });
     });
   }
 
@@ -293,8 +319,10 @@
   };
 
   document.getElementById('delete-btn').onclick = async () => {
-    if(confirm("この回のデータを完全に削除しますか？")) {
+    if(confirm("【警告】この回の名簿と質問を完全に削除します。よろしいですか？")) {
       await Promise.all([remove(ref(db, `attendance/${viewingSessionId}`)), remove(ref(db, `questions/${viewingSessionId}`))]);
+      if (viewingSessionId === activeSessionId) await remove(ref(db, 'active_session'));
+      alert("削除しました。");
       location.reload();
     }
   };
