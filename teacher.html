@@ -3,31 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>教員用ダッシュボード（龍谷大・鉄壁版）</title>
+  <title>教員用ダッシュボード（龍谷大・鉄壁完全版）</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; line-height: 1.6; }
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; line-height: 1.6; }
+    h2 { color: #333; }
     .box { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     .session-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 15px; }
-    select, input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    select, input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
     button { color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; transition: 0.3s; font-weight: bold; }
+    .btn-blue { background: #4285f4; }
     .btn-warning { background: #ffc107; color: #333; }
     .btn-success { background: #28a745; }
     .btn-danger { background: #dc3545; }
-    .btn-blue { background: #4285f4; }
+    .btn-secondary { background: #6c757d; }
     .btn-outline { background: #fff; color: #666; border: 1px solid #ccc; padding: 5px 15px; font-weight: normal; }
     .btn-outline.active { background: #666; color: #fff; border-color: #666; }
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 14px; margin-bottom: 12px; border-radius: 6px; }
     .question-card.answered { border-left-color: #28a745; opacity: 0.5; }
     #questions-container.hide-answered .answered { display: none; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; }
   </style>
 </head>
 <body>
-  <h2>講義支援・鉄壁アーカイブ管理（龍谷大）</h2>
+  <h2>教員用：鉄壁アーカイブ管理（龍谷大）</h2>
 
   <div id="login-section" class="box" style="text-align: center; padding: 40px;">
     <button id="login-btn" type="button" class="btn-blue" style="font-size: 18px;">Googleでログイン</button>
+    <p id="login-error" style="color:#c00; margin-top:15px;"></p>
   </div>
 
   <div id="dashboard-section" style="display:none;">
@@ -36,111 +40,45 @@
       <div class="session-grid">
         <div><label>曜日</label><select id="sel-day"><option>月</option><option>火</option><option>水</option><option>木</option><option>金</option><option>土</option></select></div>
         <div><label>時限</label><select id="sel-period"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
-        <div><label>科目名</label><select id="sel-subject"><option>英語総合１(A)</option><option>英語総合 2(A)</option><option>英語総合１(B)</option><option>英語総合 2(B)</option></select></div>
+        <div><label>科目名</label><select id="sel-subject">
+          <option>英語総合１(A)</option><option>英語総合 2(A)</option><option>英語総合１(B)</option><option>英語総合 2(B)</option>
+          <option>英語総合 ３</option><option>英語総合 ４</option><option>英語総合3(B)</option><option>英語総合4(B)</option>
+        </select></div>
         <div><label>回数</label><select id="sel-count"></select></div>
         <div><label>日付</label><input type="date" id="inp-date"></div>
       </div>
       <div style="display: flex; gap: 10px; align-items: center;">
         <button id="set-session-btn" type="button" class="btn-warning">講義を開始</button>
-        <button id="end-session-btn" type="button" class="btn-danger" style="display: none;">講義を終了</button>
+        <button id="end-session-btn" type="button" class="btn-danger" style="display: none;">講義を終了（リセット）</button>
         <span style="font-size:0.9em; color:#666;">状態: <b id="active-label">未設定</b></span>
       </div>
     </div>
 
     <div class="box" style="border-left: 4px solid #17a2b8;">
-      <div style="display:flex; gap:10px;">
-        <input type="text" id="search-keyword" placeholder="氏名や内容で検索" style="flex:2;">
+      <p style="margin:0 0 10px 0; font-weight: bold;">過去データの万能検索</p>
+      <div style="display:flex; gap:10px; margin-bottom:10px;">
+        <input type="text" id="search-keyword" placeholder="検索キーワード（内容または氏名）" style="flex:2;">
         <button id="search-btn" type="button" class="btn-blue">検索</button>
       </div>
-      <div id="search-results-area" style="display:none;"><hr><div id="search-table-container"></div></div>
+      <div id="search-results-area" style="display:none;">
+        <hr>
+        <div id="search-table-container"></div>
+        <button id="close-search-btn" type="button" class="btn-secondary" style="margin-top:10px;">閉じる</button>
+      </div>
     </div>
 
     <div class="box">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-        <div style="display: flex; gap: 10px;">
-          <button id="filter-all-btn" class="btn-outline active">すべて</button>
-          <button id="filter-unanswered-btn" class="btn-outline">未対応のみ</button>
+        <div style="display: flex; align-items: center; gap: 15px;">
+          <span style="font-weight: bold;">本日の質問</span>
+          <div style="display: flex; gap: 5px;">
+            <button id="filter-all-btn" class="btn-outline active" style="padding:4px 10px; font-size:11px;">すべて</button>
+            <button id="filter-unanswered-btn" class="btn-outline" style="padding:4px 10px; font-size:11px;">未対応のみ</button>
+          </div>
         </div>
-        <div style="font-weight: bold;">出席: <span id="attendance-count" style="color:#28a745;">0</span> 名</div>
+        <div style="font-weight: bold;">出席: <span id="attendance-count" style="color:#28a745; font-size:1.2em;">0</span> 名</div>
       </div>
       <div id="questions-container">講義を開始してください。</div>
-    </div>
-  </div>
-
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-    import { getDatabase, ref, set, get, onValue, onChildAdded, onChildChanged, update, remove } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
-
-    const firebaseConfig = { /* 龍谷大のConfigをここに貼る */ };
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getDatabase(app);
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp", prompt: 'select_account' });
-
-    const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
-    let currentSessionId = "";
-
-    // 回数プルダウン生成
-    const selCount = document.getElementById('sel-count');
-    for(let i=1;i<=15;i++){ const opt=document.createElement('option'); opt.value=i; opt.innerText=`第${i}回`; selCount.appendChild(opt); }
-    const now = new Date(); document.getElementById('inp-date').valueAsDate = now;
-    document.getElementById('sel-day').selectedIndex = (now.getDay() === 0) ? 0 : now.getDay() - 1;
-
-    onAuthStateChanged(auth, (user) => {
-      if (user && user.email === TEACHER_EMAIL) {
-        document.getElementById('login-section').style.display = 'none';
-        document.getElementById('dashboard-section').style.display = 'block';
-        onValue(ref(db, 'active_session'), (snap) => {
-          const val = snap.val();
-          const startBtn = document.getElementById('set-session-btn');
-          const endBtn = document.getElementById('end-session-btn');
-          if (val && val.isOpen) {
-            currentSessionId = val.id;
-            document.getElementById('active-label').innerText = "講義中：" + val.title;
-            startBtn.className = "btn-success"; startBtn.innerText = "情報を更新";
-            endBtn.style.display = "inline-block";
-            startMonitoring(val.id);
-          } else {
-            startBtn.className = "btn-warning"; startBtn.innerText = "講義を開始";
-            endBtn.style.display = "none";
-            document.getElementById('active-label').innerText = "未設定";
-          }
-        });
-      }
-    });
-
-    document.getElementById('set-session-btn').onclick = async () => {
-      const d = document.getElementById('inp-date').value.replace(/-/g, "");
-      const title = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value}第${selCount.value}回`;
-      const id = `${d}_${title}`; // ルールで使用するセッションID
-      await set(ref(db, 'active_session'), { id: id, title: title, isOpen: true });
-    };
-
-    document.getElementById('end-session-btn').onclick = async () => {
-      if (confirm("講義を終了しますか？")) await update(ref(db, 'active_session'), { isOpen: false });
-    };
-
-    function startMonitoring(sessionId) {
-      onValue(ref(db, `attendance/${sessionId}`), (s) => {
-        document.getElementById('attendance-count').innerText = Object.keys(s.val() || {}).length;
-      });
-      onChildAdded(ref(db, `questions/${sessionId}`), (s) => renderQuestion(s.key, s.val()));
-      onChildChanged(ref(db, `questions/${sessionId}`), (s) => renderQuestion(s.key, s.val()));
-    }
-
-    function renderQuestion(key, data) {
-      const qContainer = document.getElementById('questions-container');
-      if (qContainer.innerText.includes("開始")) qContainer.innerHTML = "";
-      let card = document.getElementById(`q-${key}`);
-      if (!card) { card = document.createElement('div'); card.id = `q-${key}`; qContainer.prepend(card); }
-      card.className = `question-card ${data.answered ? 'answered' : ''}`;
-      card.innerHTML = `<div><small>${data.email}</small> <button onclick="window.toggleQ('${key}', ${!data.answered})">${data.answered?'済':'未'}</button></div><div style="font-weight:bold;">${data.text}</div>`;
-    }
-
-    window.toggleQ = (key, val) => update(ref(db, `questions/${currentSessionId}/${key}`), { answered: val });
-    document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
-  </script>
-</body>
-</html>
+      <div style="text-align: right; margin-top: 20px;">
+        <span id="user-info" style="font-size: 11px; color: #999;"></span>
+        <button id
