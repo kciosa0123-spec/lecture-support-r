@@ -187,9 +187,18 @@
     };
 
     // 講義終了
-    endBtn.onclick = async () => {
+    document.getElementById('end-session-btn').onclick = async () => {
       if (confirm("講義を終了しますか？（学生側も待機中になります）")) {
-        await update(ref(db, 'active_session'), { isOpen: false });
+        try {
+          // update ではなく remove を使うことで、active_session を完全にリセットします
+          // これにより次回「講義を開始」した時に新しい ID で綺麗に始まります
+          await remove(ref(db, 'active_session'));
+          alert("講義を終了しました。");
+          location.reload();
+        } catch (e) {
+          console.error(e);
+          alert("終了に失敗しました。ルールを確認してください: " + e.message);
+        }
       }
     };
 
