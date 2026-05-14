@@ -56,10 +56,10 @@
     </div>
 
     <div class="box" style="border-left: 4px solid #17a2b8;">
-      <p style="margin:0 0 10px 0; font-weight: bold;">過去データの万能検索</p>
+      <p style="margin:0 0 10px 0; font-weight: bold;">過去データの万能検索（出席＋質問）</p>
       <div style="display:flex; gap:10px; margin-bottom:10px;">
-        <input type="text" id="search-keyword" placeholder="キーワード（内容または氏名）" style="flex:2;">
-        <input type="text" id="search-id" placeholder="学籍番号（任意）" style="flex:1;">
+        <input type="text" id="search-keyword" placeholder="検索キーワード（内容・氏名）" style="flex:2;">
+        <input type="text" id="search-id" placeholder="学籍番号" style="flex:1;">
         <button id="search-btn" type="button" class="btn-blue">検索</button>
       </div>
       <div id="search-results-area" style="display:none;">
@@ -138,7 +138,7 @@
     const lastCount = localStorage.getItem('ryukoku_last_count');
     if (lastCount) selCount.value = lastCount;
 
-    // 日付と曜日の自動設定
+    // 【自動連動】日付と曜日の初期設定
     const now = new Date();
     document.getElementById('inp-date').valueAsDate = now;
     const dayIdx = now.getDay();
@@ -182,10 +182,7 @@
       const d = new Date(document.getElementById('inp-date').value);
       const countVal = selCount.value;
       const label = `${document.getElementById('sel-day').value}${document.getElementById('sel-period').value}${document.getElementById('sel-subject').value} 第${countVal}回(${d.getMonth()+1}/${d.getDate()})`;
-      
-      // 次回のために回数を記憶
       localStorage.setItem('ryukoku_last_count', countVal);
-      
       await set(ref(db, 'active_session'), { label: label });
       alert("講義セッションを設定しました。");
     };
@@ -197,7 +194,7 @@
       }
     };
 
-    // 万能検索ロジック (維持)
+    // 万能検索ロジック
     document.getElementById('search-btn').onclick = async () => {
       const keyword = document.getElementById('search-keyword').value.toLowerCase().trim();
       const targetId = document.getElementById('search-id').value.trim();
@@ -223,7 +220,7 @@
         });
       });
       results.sort((a, b) => b.timestamp - a.timestamp);
-      document.getElementById('search-status').innerText = `${results.length} 件発見。`;
+      document.getElementById('search-status').innerText = `${results.length} 件見つかりました。`;
       let html = "<table><thead><tr><th>種別</th><th>講義回</th><th>番号</th><th>名前</th><th>内容</th></tr></thead><tbody>";
       results.forEach(r => { html += `<tr><td><span style="font-size:10px; padding:2px 4px; border-radius:3px; background:${r.type==='出席'?'#e8f5e9':'#e3f2fd'}">${r.type}</span></td><td>${r.session}</td><td>${r.studentId}</td><td>${r.studentName}</td><td style="white-space:pre-wrap;">${r.content}</td></tr>`; });
       document.getElementById('search-table-container').innerHTML = html + "</tbody></table>";
@@ -231,7 +228,7 @@
       sBtn.disabled = false; sBtn.innerText = "検索";
     };
 
-    // フィルター・監視・アーカイブ (維持)
+    // 表示フィルタ
     document.getElementById('filter-all-btn').onclick = function() { qContainer.classList.remove('hide-answered'); this.classList.add('active'); document.getElementById('filter-unanswered-btn').classList.remove('active'); };
     document.getElementById('filter-unanswered-btn').onclick = function() { qContainer.classList.add('hide-answered'); this.classList.add('active'); document.getElementById('filter-all-btn').classList.remove('active'); };
 
@@ -257,11 +254,12 @@
     window.toggleQ = (key, val) => update(ref(db, `questions/${currentSession.replace(/[.#$/[\]]/g, "_")}/${key}`), { answered: val });
     window.toggleAction = (name) => { const el = document.getElementById(`actions-${name}`); el.style.display = el.style.display === 'block' ? 'none' : 'block'; };
 
+    // アーカイブとCSV
     document.getElementById('load-archive-btn').onclick = async () => {
       const archiveArea = document.getElementById('archive-list-area');
       if (archiveArea.style.display === 'block') { archiveArea.style.display = 'none'; return; }
       const snap = await get(ref(db, 'attendance')); const d = snap.val();
-      if (!d) { archiveArea.innerHTML = "なし"; }
+      if (!d) { archiveArea.innerHTML = "データなし"; }
       else {
         let html = "<table><thead><tr><th>講義名</th><th>操作</th></tr></thead><tbody>";
         Object.keys(d).sort().reverse().forEach(n => {
@@ -281,8 +279,8 @@
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bom, csv], { type: 'text/csv' })); a.download = `${type}_${sessionName}.csv`; a.click();
     };
 
-    window.deleteSession = async (n) => { if (confirm("削除？")) { await remove(ref(db, `attendance/${n}`)); await remove(ref(db, `questions/${n}`)); location.reload(); } };
-    
+    window.deleteSession = async (n) => { if (confirm("削除しますか？")) { await remove(ref(db, `attendance/${n}`)); await remove(ref(db, `questions/${n}`)); location.reload(); } };
+
     document.getElementById('summary-attendance-btn').onclick = async () => {
       const snap = await get(ref(db, 'attendance')); const all = snap.val(); if (!all) return alert("なし");
       const map = {}; Object.keys(all).forEach(s => { Object.keys(all[s]).forEach(id => { if (!map[id]) map[id] = { name: all[s][id].studentName, count: 0 }; map[id].count++; }); });
