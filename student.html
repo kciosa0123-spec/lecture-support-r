@@ -5,29 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>講義支援ツール（龍谷大・鉄壁版）</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #f0f2f5; line-height: 1.5; }
-    .box { background: white; padding: 20px; border-radius: 12px; shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    h1 { font-size: 1.2rem; color: #1a73e8; margin-top: 0; }
-    input, textarea { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #f0f2f5; line-height: 1.5; }
+    .box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    h1 { font-size: 1.2rem; color: #1a73e8; margin-top: 0; text-align: center; }
+    label { font-size: 0.85rem; color: #555; font-weight: bold; }
+    input, textarea { width: 100%; padding: 12px; margin: 8px 0 15px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
     button { width: 100%; padding: 12px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; transition: 0.3s; }
-    #attendance-btn { background: #34a853; color: white; margin-bottom: 10px; }
+    #attendance-btn { background: #34a853; color: white; }
     #attendance-btn:disabled { background: #ccc; cursor: not-allowed; }
     #send-btn { background: #1a73e8; color: white; }
-    .status-msg { font-size: 0.9rem; text-align: center; color: #666; margin-top: 10px; }
-    #session-info { background: #e8f0fe; color: #1967d2; padding: 10px; border-radius: 6px; font-weight: bold; margin-bottom: 15px; text-align: center; }
+    #send-btn:disabled { background: #ccc; }
+    .status-msg { font-size: 0.85rem; text-align: center; color: #d93025; margin-top: 5px; height: 1.2rem; }
+    #session-info { background: #e8f0fe; color: #1967d2; padding: 10px; border-radius: 6px; font-weight: bold; margin-bottom: 15px; text-align: center; font-size: 0.9rem; }
     .hidden { display: none; }
+    .profile-box { background: #fffbe6; border: 1px solid #ffe58f; }
   </style>
 </head>
 <body>
 
-<div id="login-section" class="box" style="text-align: center;">
+<div id="login-section" class="box" style="text-align: center; padding: 40px 20px;">
   <h1>講義支援ツール</h1>
-  <p>龍谷大学アカウントでログイン</p>
-  <button id="login-btn" style="background: white; color: #444; border: 1px solid #ddd;">Googleでログイン</button>
+  <p style="color:#666; margin-bottom: 20px;">龍谷大学アカウントでログインしてください</p>
+  <button id="login-btn" style="background: white; color: #444; border: 1px solid #ddd; display: flex; align-items: center; justify-content: center; gap: 10px;">
+    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"> Googleでログイン
+  </button>
 </div>
 
 <div id="main-section" class="hidden">
   <div id="session-info">教員の開始待ち...</div>
+
+  <div class="box profile-box" id="profile-area">
+    <label>学籍番号</label>
+    <input type="text" id="student-id" placeholder="例: 12345678">
+    <label>氏名</label>
+    <input type="text" id="student-name" placeholder="例: 龍谷 太郎">
+    <p style="font-size: 11px; color: #856404; margin: 0;">※一度出席を送信すると変更できません。</p>
+  </div>
   
   <div id="interactive-area" class="hidden">
     <div class="box">
@@ -36,14 +49,15 @@
     </div>
 
     <div class="box">
-      <textarea id="question-text" rows="3" placeholder="質問・コメントを入力 (500文字以内)"></textarea>
+      <label>質問・コメント</label>
+      <textarea id="question-text" rows="3" placeholder="先生へのメッセージを入力 (500文字以内)"></textarea>
       <button id="send-btn">送信 (Send)</button>
-      <p id="send-status" class="status-msg"></p>
+      <p id="send-status" class="status-msg" style="color: #34a853;"></p>
     </div>
   </div>
   
-  <div style="text-align: center;">
-    <button id="logout-btn" style="background: none; color: #888; font-size: 12px; text-decoration: underline;">ログアウト</button>
+  <div style="text-align: center; margin-bottom: 40px;">
+    <button id="logout-btn" style="background: none; color: #888; font-size: 12px; text-decoration: underline;">ログアウト (Logout)</button>
   </div>
 </div>
 
@@ -52,15 +66,17 @@
   import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
   import { getDatabase, ref, set, push, onValue, get } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
+  // 龍谷大学用 Firebase Config
   const firebaseConfig = {
-  apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
-  authDomain: "lecture-support.firebaseapp.com",
-  databaseURL: "https://lecture-support-default-rtdb.firebaseio.com",
-  projectId: "lecture-support",
-  storageBucket: "lecture-support.firebasestorage.app",
-  messagingSenderId: "285290664467",
-  appId: "1:285290664467:web:b39a07bbb08da6fc45a5e6"
-};
+    apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
+    authDomain: "lecture-support.firebaseapp.com",
+    databaseURL: "https://lecture-support-default-rtdb.firebaseio.com",
+    projectId: "lecture-support",
+    storageBucket: "lecture-support.firebasestorage.app",
+    messagingSenderId: "285290664467",
+    appId: "1:285290664467:web:b39a07bbb08da6fc45a5e6"
+  };
+
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = getDatabase(app);
@@ -70,14 +86,19 @@
   let currentUser = null;
   let currentSessionId = null;
 
-  // 1. 認証監視
+  // 1. 認証状態の監視
   onAuthStateChanged(auth, (user) => {
     if (user) {
       if (!user.email.endsWith("@mail.ryukoku.ac.jp")) {
-        alert("龍谷大学のアカウントを使用してください。");
+        alert("龍谷大学のアカウント(@mail.ryukoku.ac.jp)でログインしてください。");
         signOut(auth); return;
       }
       currentUser = user;
+      
+      // 保存されているプロフィールを復元
+      document.getElementById('student-id').value = localStorage.getItem('ryu_student_id') || "";
+      document.getElementById('student-name').value = localStorage.getItem('ryu_student_name') || "";
+      
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('main-section').classList.remove('hidden');
       monitorSession();
@@ -87,7 +108,7 @@
     }
   });
 
-  // 2. 講義セッション監視
+  // 2. 講義セッションのリアルタイム監視
   function monitorSession() {
     onValue(ref(db, 'active_session'), (snap) => {
       const val = snap.val();
@@ -98,7 +119,7 @@
         currentSessionId = val.id;
         infoEl.innerText = "講義中：" + val.title;
         areaEl.classList.remove('hidden');
-        checkAttendance();
+        checkAttendanceStatus();
       } else {
         currentSessionId = null;
         infoEl.innerText = "教員による講義開始を待っています...";
@@ -107,42 +128,71 @@
     });
   }
 
-  // 3. 出席状況チェック
-  async function checkAttendance() {
+  // 3. 出席済みかどうかの確認
+  async function checkAttendanceStatus() {
     if (!currentSessionId || !currentUser) return;
     const snap = await get(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`));
     const btn = document.getElementById('attendance-btn');
+    const profileArea = document.getElementById('profile-area');
+    
     if (snap.exists()) {
       btn.innerText = "出席済み (Submitted)";
       btn.disabled = true;
+      // 出席済みの場合は入力欄を固定
+      document.getElementById('student-id').disabled = true;
+      document.getElementById('student-name').disabled = true;
+      profileArea.style.opacity = "0.6";
     } else {
       btn.innerText = "出席 (Attendance)";
       btn.disabled = false;
+      document.getElementById('student-id').disabled = false;
+      document.getElementById('student-name').disabled = false;
+      profileArea.style.opacity = "1";
     }
   }
 
-  // 4. 出席送信（鉄壁対応：保存先をUIDに）
+  // 4. 出席送信
   document.getElementById('attendance-btn').onclick = async () => {
-    if (!currentSessionId || !currentUser) return;
+    const sid = document.getElementById('student-id').value.trim();
+    const sname = document.getElementById('student-name').value.trim();
+    
+    if (!sid || !sname) {
+      alert("学籍番号と氏名を入力してください。");
+      return;
+    }
+
+    if (!confirm("出席を送信しますか？（後から変更できません）")) return;
+
     try {
+      // ブラウザに保存
+      localStorage.setItem('ryu_student_id', sid);
+      localStorage.setItem('ryu_student_name', sname);
+
       await set(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`), {
         uid: currentUser.uid,
         email: currentUser.email,
+        studentId: sid,
+        name: sname,
         timestamp: Date.now()
       });
-      checkAttendance();
-    } catch (e) { alert("送信に失敗しました。講義が終了している可能性があります。"); }
+      checkAttendanceStatus();
+      alert("出席を送信しました。");
+    } catch (e) {
+      alert("送信に失敗しました。講義が終了しているか、既に送信済みです。");
+    }
   };
 
-  // 5. 質問送信（鉄壁対応：バリデーションに適合する形式）
+  // 5. 質問送信
   document.getElementById('send-btn').onclick = async () => {
     const text = document.getElementById('question-text').value.trim();
-    if (!text || !currentSessionId || !currentUser) return;
+    if (!text || !currentSessionId) return;
     if (text.length > 500) return alert("500文字以内で入力してください。");
 
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true;
+
     try {
-      const qRef = ref(db, `questions/${currentSessionId}`);
-      await push(qRef, {
+      await push(ref(db, `questions/${currentSessionId}`), {
         uid: currentUser.uid,
         email: currentUser.email,
         text: text,
@@ -150,13 +200,18 @@
         answered: false
       });
       document.getElementById('question-text').value = "";
-      document.getElementById('send-status').innerText = "送信完了！";
-      setTimeout(() => { document.getElementById('send-status').innerText = ""; }, 3000);
-    } catch (e) { alert("送信に失敗しました。"); }
+      const status = document.getElementById('send-status');
+      status.innerText = "送信完了！";
+      setTimeout(() => { status.innerText = ""; }, 3000);
+    } catch (e) {
+      alert("送信に失敗しました。");
+    } finally {
+      btn.disabled = false;
+    }
   };
 
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
-  document.getElementById('logout-btn').onclick = () => signOut(auth);
+  document.getElementById('logout-btn').onclick = () => { if(confirm("ログアウトしますか？")) signOut(auth); };
 </script>
 </body>
 </html>
