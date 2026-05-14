@@ -2,9 +2,9 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>教員ダッシュボード（龍谷大・日付自動管理版）</title>
+  <title>教員用ダッシュボード（龍谷大・完全無欠版）</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f4f7f6; line-height: 1.6; }
+    body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f7f6; line-height: 1.6; }
     .box { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
     
     /* 曜日ごとの3列レイアウト */
@@ -12,36 +12,38 @@
     .day-column { background: #ebedef; padding: 15px; border-radius: 8px; }
     .day-title { font-weight: bold; text-align: center; margin-bottom: 15px; color: #444; border-bottom: 2px solid #ccc; padding-bottom: 5px; }
     
-    /* コマ（スロット）の配置 */
+    /* コマ配置 */
     .period-slot { margin-bottom: 12px; min-height: 45px; }
     .period-label { font-size: 10px; color: #888; margin-bottom: 2px; }
     .empty-slot { border: 1px dashed #ccc; border-radius: 6px; height: 40px; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 11px; }
 
-    /* 科目ボタン */
+    /* 科目ボタン・回数グリッド */
     .subject-btn { width: 100%; background: #fff; color: #333; border: 1px solid #bbb; padding: 8px; border-radius: 6px; text-align: left; font-size: 12px; cursor: pointer; transition: 0.2s; font-weight: bold; }
     .subject-btn:hover { background: #f0f0f0; border-color: #4285f4; }
     .subject-btn.active { background: #4285f4; color: #fff; border-color: #4285f4; }
-
-    /* 回数グリッド (1-15) */
     .session-grid-mini { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 8px; padding: 8px; background: rgba(255,255,255,0.7); border-radius: 6px; border: 1px solid #dee2e6; display: none; }
     .session-btn { background: #eee; border: 1px solid #ccc; font-size: 10px; padding: 5px 0; border-radius: 4px; cursor: pointer; color: #666; font-weight: bold; }
     .session-btn.has-data { background: #34a853; color: #fff; border-color: #2d8a47; }
-    .session-btn:hover { opacity: 0.8; transform: scale(1.05); }
     .session-btn.selected { outline: 3px solid #ffc107; z-index: 1; }
 
-    /* ボタン類 */
+    /* 万能検索エリア */
+    .search-area { background: #e3f2fd; border: 1px solid #90caf9; }
+    #search-results-table { width: 100%; border-collapse: collapse; font-size: 12px; background: white; margin-top: 10px; }
+    #search-results-table th { background: #1976d2; color: white; padding: 8px; }
+    #search-results-table td { padding: 8px; border-bottom: 1px solid #eee; }
+
+    /* 汎用パーツ */
     button { color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
     .btn-blue { background: #4285f4; }
     .btn-warning { background: #ffc107; color: #333; }
     .btn-danger { background: #dc3545; }
     .btn-success { background: #28a745; }
     .btn-secondary { background: #6c757d; }
-    
-    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    .hidden { display: none; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 12px; margin-bottom: 10px; border-radius: 6px; }
     .question-card.answered { border-left-color: #28a745; opacity: 0.6; }
-    .hidden { display: none; }
   </style>
 </head>
 <body>
@@ -54,6 +56,23 @@
 
   <div id="dashboard-section" class="hidden">
     
+    <div class="box search-area">
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <span style="font-weight: bold; font-size: 14px;">🗂️ 全履歴検索:</span>
+        <input type="text" id="global-search-input" placeholder="名前、学籍番号、質問内容で検索..." style="flex:1; padding: 8px; border-radius: 5px; border: 1px solid #ccc;">
+        <button id="global-search-btn" class="btn-blue">検索実行</button>
+        <button id="clear-search-btn" class="btn-secondary" style="padding: 8px 12px;">クリア</button>
+      </div>
+      <div id="search-results-area" class="hidden" style="max-height: 300px; overflow-y: auto; margin-top: 15px; border-top: 1px solid #90caf9;">
+        <table id="search-results-table">
+          <thead>
+            <tr><th>日付/講義</th><th>タイプ</th><th>学籍番号/氏名</th><th>内容</th></tr>
+          </thead>
+          <tbody id="search-results-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="timetable-grid">
       <div class="day-column"><div class="day-title">月曜日</div><div id="subjects-mon"></div></div>
       <div class="day-column"><div class="day-title">火曜日</div><div id="subjects-tue"></div></div>
@@ -63,12 +82,12 @@
     <div class="box" id="active-panel" style="border-top: 5px solid #4285f4;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
-          <span style="font-size: 12px; color: #666;">選択中の講義:</span>
-          <h3 id="current-display-label" style="margin: 0;">科目と回数を選択してください</h3>
+          <span style="font-size: 11px; color: #666;">選択中:</span>
+          <h3 id="current-display-label" style="margin: 0; font-size: 1.1rem;">科目と回数を選択してください</h3>
         </div>
         <div id="data-actions" class="hidden">
           <button id="export-csv-btn" class="btn-success">CSV出力</button>
-          <button id="delete-btn" class="btn-danger" style="margin-left:10px;">この回を削除</button>
+          <button id="delete-btn" class="btn-danger" style="margin-left:10px;">回を削除</button>
         </div>
         <div id="start-actions">
           <button id="start-lecture-btn" class="btn-warning">この回で講義を開始</button>
@@ -89,7 +108,7 @@
         </table>
       </div>
       <hr>
-      <div id="questions-container">講義を開始するか、過去の回数ボタンを押してください。</div>
+      <div id="questions-container"></div>
     </div>
 
     <div style="text-align: right; margin-top: 20px;">
@@ -130,6 +149,7 @@
   let viewingSessionId = "";
   let activeSessionId = "";
 
+  // UI生成
   Object.keys(timetable).forEach(day => {
     const container = document.getElementById(`subjects-${day}`);
     for (let p = 1; p <= 4; p++) {
@@ -188,50 +208,89 @@
     for(let i=1; i<=15; i++) {
       const found = Object.keys(allAtt).find(id => id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`));
       const btn = document.getElementById(`btn-${day}-${p}-${i}`);
-      if(found) {
-        btn.classList.add('has-data');
-        btn.dataset.actualId = found;
-      }
+      if(found) { btn.classList.add('has-data'); btn.dataset.actualId = found; }
     }
   }
 
-  // --- ✨日付抽出・表示ロジックの追加 ---
   window.loadSession = (day, sub, p, num) => {
     const btn = document.getElementById(`btn-${day}-${p}-${num}`);
     const dayName = {mon:"月", tue:"火", fri:"金"}[day];
     const now = new Date();
-    const dStrToday = now.toISOString().slice(0,10).replace(/-/g,""); // 今日の日付 (20260515)
-    
+    const dStrToday = now.toISOString().slice(0,10).replace(/-/g,"");
     const id = btn.dataset.actualId || `${dStrToday}_${dayName}${p}${sub}第${num}回`;
     viewingSessionId = id;
     
-    // IDの先頭8桁から日付を計算
     let dateLabel = "";
     const dateMatch = id.match(/^(\d{4})(\d{2})(\d{2})_/);
-    if(dateMatch) {
-      dateLabel = ` (${parseInt(dateMatch[2])}月${parseInt(dateMatch[3])}日)`;
-    } else {
-      dateLabel = ` (${now.getMonth()+1}月${now.getDate()}日)`;
-    }
+    if(dateMatch) dateLabel = ` (${parseInt(dateMatch[2])}月${parseInt(dateMatch[3])}日)`;
+    else dateLabel = ` (${now.getMonth()+1}月${now.getDate()}日)`;
 
     document.querySelectorAll('.session-btn').forEach(el => el.classList.remove('selected'));
     btn.classList.add('selected');
-    
     document.getElementById('current-display-label').innerText = `${dayName}曜${p}限：${sub} 【第${num}回】${dateLabel}`;
     
-    const dataActions = document.getElementById('data-actions');
-    const startLectureBtn = document.getElementById('start-lecture-btn');
-    if(btn.classList.contains('has-data')) {
-      dataActions.classList.remove('hidden');
-      startLectureBtn.innerText = "この回を再開/更新";
-    } else {
-      dataActions.classList.add('hidden');
-      startLectureBtn.innerText = "この回で講義を開始";
-    }
+    document.getElementById('data-actions').classList.toggle('hidden', !btn.classList.contains('has-data'));
+    document.getElementById('start-lecture-btn').innerText = btn.classList.contains('has-data') ? "この回を再開/更新" : "この回で講義を開始";
     
     off(ref(db, `attendance/${viewingSessionId}`));
     off(ref(db, `questions/${viewingSessionId}`));
     startMonitoring(id);
+  };
+
+  // --- ✨全データ横断検索ロジック (復活) ---
+  document.getElementById('global-search-btn').onclick = async () => {
+    const query = document.getElementById('global-search-input').value.toLowerCase().trim();
+    if (!query) return alert("検索キーワードを入力してください");
+
+    const btn = document.getElementById('global-search-btn');
+    btn.innerText = "検索中...";
+    btn.disabled = true;
+
+    const [attSnap, qSnap] = await Promise.all([get(ref(db, 'attendance')), get(ref(db, 'questions'))]);
+    const allAtt = attSnap.val() || {};
+    const allQ = qSnap.val() || {};
+    const results = [];
+
+    // 出席データをループ
+    Object.keys(allAtt).forEach(sid => {
+      Object.keys(allAtt[sid]).forEach(uid => {
+        const a = allAtt[sid][uid];
+        const combined = (a.studentId + (a.name||"") + (a.email||"")).toLowerCase();
+        if (combined.includes(query)) {
+          results.push({ sid, type: "出席", person: `${a.studentId} / ${a.name||'-'}`, content: "---", time: a.timestamp });
+        }
+      });
+    });
+
+    // 質問データをループ
+    Object.keys(allQ).forEach(sid => {
+      Object.keys(allQ[sid]).forEach(qid => {
+        const q = allQ[sid][qid];
+        const combined = ((q.name||"") + (q.email||"") + (q.text||"")).toLowerCase();
+        if (combined.includes(query)) {
+          results.push({ sid, type: "質問", person: q.email || q.name, content: q.text, time: q.timestamp });
+        }
+      });
+    });
+
+    results.sort((a, b) => b.time - a.time);
+    const body = document.getElementById('search-results-body');
+    body.innerHTML = results.length ? "" : "<tr><td colspan='4'>見つかりませんでした</td></tr>";
+    
+    results.forEach(r => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${r.sid}</td><td>${r.type}</td><td>${r.person}</td><td>${r.content}</td>`;
+      body.appendChild(row);
+    });
+
+    document.getElementById('search-results-area').classList.remove('hidden');
+    btn.innerText = "検索実行";
+    btn.disabled = false;
+  };
+
+  document.getElementById('clear-search-btn').onclick = () => {
+    document.getElementById('global-search-input').value = "";
+    document.getElementById('search-results-area').classList.add('hidden');
   };
 
   onAuthStateChanged(auth, (user) => {
@@ -249,16 +308,12 @@
 
   document.getElementById('start-lecture-btn').onclick = async () => {
     if(!viewingSessionId) return alert("科目と回数を選択してください。");
-    const label = document.getElementById('current-display-label').innerText;
-    await set(ref(db, 'active_session'), { id: viewingSessionId, title: label, isOpen: true });
-    alert("講義を開始しました。学生が送信可能になりました。");
+    await set(ref(db, 'active_session'), { id: viewingSessionId, title: document.getElementById('current-display-label').innerText, isOpen: true });
+    alert("講義を開始しました。");
   };
 
   document.getElementById('end-lecture-btn').onclick = async () => {
-    if(confirm("講義を終了します。学生の画面を待機中に戻します。")) {
-      await remove(ref(db, 'active_session'));
-      location.reload();
-    }
+    if(confirm("講義を終了します。")) { await remove(ref(db, 'active_session')); location.reload(); }
   };
 
   function startMonitoring(sessionId) {
@@ -299,11 +354,10 @@
   };
 
   document.getElementById('delete-btn').onclick = async () => {
-    if(confirm("【警告】この回の名簿と質問を完全に削除します。")) {
+    if(confirm("この回のデータを完全に削除しますか？")) {
       await Promise.all([remove(ref(db, `attendance/${viewingSessionId}`)), remove(ref(db, `questions/${viewingSessionId}`))]);
       if (viewingSessionId === activeSessionId) await remove(ref(db, 'active_session'));
-      alert("削除しました。");
-      location.reload();
+      alert("削除しました。"); location.reload();
     }
   };
 
