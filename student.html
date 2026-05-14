@@ -37,7 +37,7 @@
     <p style="font-size: 0.8rem; color: #856404; margin-top:0;">初回のみ入力（次回から自動入力されます）</p>
     <label>学籍番号 (Student ID)</label>
     <input type="text" id="student-id" placeholder="例: A2X000X">
-    <label>氏名 (Name) ※苗字と名前の間にスペース</label>
+    <label>氏名 (Name)</label>
     <input type="text" id="student-name" placeholder="例: 龍谷 太郎">
   </div>
   
@@ -48,7 +48,7 @@
     </div>
 
     <div class="box">
-      <label>質問・コメント (Message)</label>
+      <label>質問・コメント</label>
       <textarea id="question-text" rows="3" placeholder="メッセージを入力"></textarea>
       <button id="send-btn">メッセージを送信</button>
       <p id="send-status" class="status-msg" style="color: #34a853;"></p>
@@ -56,7 +56,7 @@
   </div>
   
   <div style="text-align: center; margin-top: 20px;">
-    <button id="logout-btn" style="background: none; color: #888; font-size: 12px; text-decoration: underline; width: auto;">ログアウト (Logout)</button>
+    <button id="logout-btn" style="background: none; color: #888; font-size: 12px; text-decoration: underline; width: auto;">ログアウト</button>
   </div>
 </div>
 
@@ -65,6 +65,7 @@
   import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
   import { getDatabase, ref, set, push, onValue, get } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
+  // --- 龍谷大学用設定チェック済み ---
   const firebaseConfig = {
     apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
     authDomain: "lecture-support.firebaseapp.com",
@@ -85,9 +86,10 @@
   let currentSessionId = null;
 
   onAuthStateChanged(auth, (user) => {
-    if (user) {
+    // 【修正：ガード追加】user または user.email が存在しない場合は処理を中断
+    if (user && user.email) {
       if (!user.email.endsWith("@mail.ryukoku.ac.jp")) {
-        alert("龍谷大学アカウントでログインしてください。");
+        alert("龍谷大学のアカウントでログインしてください。");
         signOut(auth); return;
       }
       currentUser = user;
@@ -141,17 +143,11 @@
   document.getElementById('attendance-btn').onclick = async () => {
     let sid = document.getElementById('student-id').value.trim().toUpperCase();
     let sname = document.getElementById('student-name').value.trim();
-
     if (!sid || !sname) return alert("学籍番号と氏名を入力してください。");
 
-    // --- ✨【追加】スペース調整ロジック ---
-    // 全角スペースを半角に変換し、連続するスペースを1つにまとめる
     sname = sname.replace(/[\s　]+/g, ' ');
-
-    // スペースが1つも含まれていない場合に警告（キャンセル可能）
     if (!sname.includes(' ')) {
-      const confirmNoSpace = confirm("苗字と名前の間にスペースがありません。よろしいですか？\n（例：龍谷 太郎）");
-      if (!confirmNoSpace) return;
+      if (!confirm("苗字と名前の間にスペースがありません。よろしいですか？")) return;
     }
 
     if (document.getElementById('attendance-btn').disabled) return;
