@@ -172,28 +172,35 @@
     const bodyText = document.getElementById('question-text').value.trim();
     if (!bodyText || !currentSessionId) return;
 
-    // 指示書に基づき、入力欄から直接情報を取得
+    // 175行目付近：メッセージ送信ボタンの処理（最新・セキュリティ強化版）
+  document.getElementById('send-btn').onclick = async () => {
+    const bodyText = document.getElementById('question-text').value.trim();
+    if (!bodyText || !currentSessionId) return;
+
+    // 入力欄から直接情報を取得（「名前なし」問題を防止）
     const sid = document.getElementById('student-id').value.trim().toUpperCase();
     const sname = document.getElementById('student-name').value.trim();
 
     try {
+      // データベースへの送信（項目名を body / read / timestamp に固定）
       await push(ref(db, `questions/${currentSessionId}`), {
         uid: currentUser.uid,
         email: currentUser.email,
         studentId: sid || "未入力",
         name: sname || "名前なし",
-        body: bodyText,        // text から body に変更
-        timestamp: Date.now(),
-        read: false            // answered から read に変更
+        body: bodyText,        // text ではなく body
+        timestamp: Date.now(), // サーバー時刻チェック用
+        read: false            // answered ではなく read
       });
+      
+      // 送信後の後処理
       document.getElementById('question-text').value = "";
       document.getElementById('send-status').innerText = "送信完了！";
+      document.getElementById('send-status').style.color = "#34a853";
       setTimeout(() => { document.getElementById('send-status').innerText = ""; }, 3000);
-    } catch (e) { alert("送信に失敗しました。セキュリティ制限の可能性があります。"); }
+      
+    } catch (e) { 
+      console.error(e);
+      alert("送信に失敗しました。ページを再読み込みするか、ログイン状態を確認してください。"); 
+    }
   };
-  
-  document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
-  document.getElementById('logout-btn').onclick = () => { if(confirm("ログアウトしますか？")) signOut(auth); };
-</script>
-</body>
-</html>
