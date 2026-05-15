@@ -167,17 +167,29 @@
     } catch (e) { alert("エラー: 送信できませんでした。"); }
   };
 
+  // メッセージ送信ボタンの処理
   document.getElementById('send-btn').onclick = async () => {
     const text = document.getElementById('question-text').value.trim();
     if (!text || !currentSessionId) return;
+
+    // ローカルストレージから情報を取得
+    const sid = localStorage.getItem('ryu_student_id') || "";
+    const sname = localStorage.getItem('ryu_student_name') || "";
+
     try {
       await push(ref(db, `questions/${currentSessionId}`), {
-        uid: currentUser.uid, email: currentUser.email, text: text, timestamp: Date.now(), answered: false
+        uid: currentUser.uid,
+        email: currentUser.email,
+        studentId: sid,    // ★追加：学籍番号
+        name: sname,       // ★追加：氏名
+        text: text,
+        timestamp: Date.now(),
+        answered: false
       });
       document.getElementById('question-text').value = "";
       document.getElementById('send-status').innerText = "送信完了！";
       setTimeout(() => { document.getElementById('send-status').innerText = ""; }, 3000);
-    } catch (e) { alert("失敗しました。"); }
+    } catch (e) { alert("送信に失敗しました。"); }
   };
 
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
