@@ -167,12 +167,12 @@
     } catch (e) { alert("エラー: 送信できませんでした。"); }
   };
 
-// メッセージ送信ボタンの処理
+// メッセージ送信ボタン
   document.getElementById('send-btn').onclick = async () => {
-    const text = document.getElementById('question-text').value.trim();
-    if (!text || !currentSessionId) return;
+    const bodyText = document.getElementById('question-text').value.trim();
+    if (!bodyText || !currentSessionId) return;
 
-    // --- ✨ここを修正：保存データではなく、入力欄から直接取得する ---
+    // 指示書に基づき、入力欄から直接情報を取得
     const sid = document.getElementById('student-id').value.trim().toUpperCase();
     const sname = document.getElementById('student-name').value.trim();
 
@@ -180,16 +180,16 @@
       await push(ref(db, `questions/${currentSessionId}`), {
         uid: currentUser.uid,
         email: currentUser.email,
-        studentId: sid || "未入力", // 入力欄が空なら「未入力」とする
-        name: sname || currentUser.email, // 氏名がなければメールを表示
-        text: text,
+        studentId: sid || "未入力",
+        name: sname || "名前なし",
+        body: bodyText,        // text から body に変更
         timestamp: Date.now(),
-        answered: false
+        read: false            // answered から read に変更
       });
       document.getElementById('question-text').value = "";
       document.getElementById('send-status').innerText = "送信完了！";
       setTimeout(() => { document.getElementById('send-status').innerText = ""; }, 3000);
-    } catch (e) { alert("送信に失敗しました。"); }
+    } catch (e) { alert("送信に失敗しました。セキュリティ制限の可能性があります。"); }
   };
   
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
