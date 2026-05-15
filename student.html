@@ -167,21 +167,21 @@
     } catch (e) { alert("エラー: 送信できませんでした。"); }
   };
 
-  // メッセージ送信ボタンの処理
+// メッセージ送信ボタンの処理
   document.getElementById('send-btn').onclick = async () => {
     const text = document.getElementById('question-text').value.trim();
     if (!text || !currentSessionId) return;
 
-    // ローカルストレージから情報を取得
-    const sid = localStorage.getItem('ryu_student_id') || "";
-    const sname = localStorage.getItem('ryu_student_name') || "";
+    // --- ✨ここを修正：保存データではなく、入力欄から直接取得する ---
+    const sid = document.getElementById('student-id').value.trim().toUpperCase();
+    const sname = document.getElementById('student-name').value.trim();
 
     try {
       await push(ref(db, `questions/${currentSessionId}`), {
         uid: currentUser.uid,
         email: currentUser.email,
-        studentId: sid,    // ★追加：学籍番号
-        name: sname,       // ★追加：氏名
+        studentId: sid || "未入力", // 入力欄が空なら「未入力」とする
+        name: sname || currentUser.email, // 氏名がなければメールを表示
         text: text,
         timestamp: Date.now(),
         answered: false
@@ -191,7 +191,7 @@
       setTimeout(() => { document.getElementById('send-status').innerText = ""; }, 3000);
     } catch (e) { alert("送信に失敗しました。"); }
   };
-
+  
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
   document.getElementById('logout-btn').onclick = () => { if(confirm("ログアウトしますか？")) signOut(auth); };
 </script>
