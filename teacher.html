@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>教員ダッシュボード（龍谷大・最終完全版）</title>
+  <title>教員ダッシュボード（龍谷大・真最終版）</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f7f6; line-height: 1.6; }
     .box { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
@@ -35,7 +35,7 @@
     .question-card.answered { border-left-color: #ccc; opacity: 0.6; background: #f9f9f9; }
     #questions-container.hide-answered .answered { display: none; }
 
-    /* 共通ボタン */
+    /* ボタン類 */
     button { color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
     .btn-blue { background: #4285f4; }
     .btn-warning { background: #ffc107; color: #333; }
@@ -201,17 +201,22 @@
     }
   }
 
+  // 「講義中」の表示を更新する関数
   function updateStartButtonState() {
     const btn = document.getElementById('start-lecture-btn');
     if (!viewingSessionId) return;
+
     if (viewingSessionId === activeSessionId) {
-      btn.innerText = "講義中"; btn.className = "btn-success";
+      btn.innerText = "講義中";
+      btn.className = "btn-success"; // 緑色
     } else {
       const sessionBtn = document.querySelector('.session-btn.selected');
       if (sessionBtn && sessionBtn.classList.contains('has-data')) {
-        btn.innerText = "再開/更新"; btn.className = "btn-success";
+        btn.innerText = "再開/更新";
+        btn.className = "btn-success";
       } else {
-        btn.innerText = "この回で講義を開始"; btn.className = "btn-warning";
+        btn.innerText = "この回で講義を開始";
+        btn.className = "btn-warning"; // 黄色
       }
     }
   }
@@ -233,6 +238,7 @@
     btn.classList.add('selected');
     document.getElementById('current-display-label').innerText = `${dayName}曜${p}限：${sub} 【第${num}回】${dateLabel}`;
     document.getElementById('data-actions').classList.toggle('hidden', !btn.classList.contains('has-data'));
+    
     updateStartButtonState();
 
     off(ref(db, `attendance/${viewingSessionId}`));
@@ -257,6 +263,7 @@
       document.getElementById('user-info').innerText = user.email;
       onValue(ref(db, 'active_session'), (snap) => {
         const val = snap.val();
+        // セッションが開いているときのみIDをセット
         activeSessionId = (val && val.isOpen) ? val.id : "";
         document.getElementById('end-lecture-btn').classList.toggle('hidden', !activeSessionId);
         updateStartButtonState();
@@ -273,6 +280,7 @@
       document.getElementById('att-count').innerText = list.length;
       attBody.innerHTML = list.map(e => `<tr><td>${e.studentId}</td><td>${e.name}</td><td>${new Date(e.timestamp).toLocaleTimeString()}</td></tr>`).join('');
     });
+    
     onValue(ref(db, `questions/${sessionId}`), (s) => {
       const data = s.val() || {};
       const keys = Object.keys(data).reverse();
@@ -280,24 +288,29 @@
       keys.forEach(key => {
         const q = data[key];
         const card = document.createElement('div'); card.id = `q-${key}`;
-        card.className = `question-card ${q.read ? 'answered' : ''}`;
+        
+        // --- ✨過去ログ互換性（body か text、read か answered）---
+        const content = q.body || q.text || "(内容なし)";
+        const isRead = (q.read !== undefined) ? q.read : (q.answered || false);
+        
+        card.className = `question-card ${isRead ? 'answered' : ''}`;
         const header = (q.studentId && q.name) ? `${q.studentId.toUpperCase()} ${q.name}` : q.email;
         card.innerHTML = `
           <div style="font-size:12px; color:#666;">
             <small>${header}</small>
-            <button onclick="window.toggleQ('${key}', ${!q.read})" 
-                    style="float:right; background:${q.read?'#ccc':'#ffc107'}; color:${q.read?'#fff':'#333'}; padding:2px 8px; font-size:11px; border-radius:4px;">
-              ${q.read ? '済' : '未'}
+            <button onclick="window.toggleQ('${key}', ${!isRead})" 
+                    style="float:right; background:${isRead?'#ccc':'#ffc107'}; color:${isRead?'#fff':'#333'}; padding:2px 8px; font-size:11px; border-radius:4px;">
+              ${isRead ? '済' : '未'}
             </button>
           </div>
-          <div style="font-weight:bold; margin-top:5px; white-space:pre-wrap;">${q.body}</div>
+          <div style="font-weight:bold; margin-top:5px; white-space:pre-wrap;">${content}</div>
         `;
         qCont.appendChild(card);
       });
     });
   }
 
-  // 横断検索 (Priority A: q.body を見るように修正)
+  // 横断検索 (旧項目 text と 新項目 body の両方を検索対象にする)
   document.getElementById('global-search-btn').onclick = async () => {
     const query = document.getElementById('global-search-input').value.toLowerCase().trim();
     if (!query) return;
@@ -311,8 +324,10 @@
     }));
     const allQ = qSnap.val() || {};
     Object.keys(allQ).forEach(sid => Object.keys(allQ[sid]).forEach(qid => {
-      const q = allQ[sid][qid]; const comb = ((q.name||"") + (q.studentId||"") + (q.email||"") + (q.body||"")).toLowerCase();
-      if (comb.includes(query)) results.push({ sid, type: "質問", person: q.email, content: q.body, time: q.timestamp });
+      const q = allQ[sid][qid]; 
+      const content = q.body || q.text || "";
+      const comb = ((q.name||"") + (q.studentId||"") + (q.email||"") + content).toLowerCase();
+      if (comb.includes(query)) results.push({ sid, type: "質問", person: q.email, content: content, time: q.timestamp });
     }));
     results.sort((a,b) => b.time - a.time);
     const body = document.getElementById('search-results-body'); body.innerHTML = results.length ? "" : "<tr><td colspan='4'>なし</td></tr>";
@@ -321,6 +336,7 @@
   };
   document.getElementById('clear-search-btn').onclick = () => { document.getElementById('global-search-input').value = ""; document.getElementById('search-results-area').classList.add('hidden'); };
 
+  // 更新時は新しいセキュリティルールに合わせて read 項目のみを更新
   window.toggleQ = (key, val) => update(ref(db, `questions/${viewingSessionId}/${key}`), { read: val });
 
   document.getElementById('start-lecture-btn').onclick = async () => {
