@@ -206,7 +206,7 @@
   };
 
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
-  document.getElementById('logout-btn').onclick = () => signOut(auth).then(()=>location.reload());
+  document.getElementById('logout-btn').onclick = () => { if(confirm("ログアウトしますか？")) signOut(auth); };
 </script>
 </body>
 </html>
