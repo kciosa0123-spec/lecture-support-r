@@ -141,6 +141,7 @@
   provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
 
   const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
+  const LECTURE_DURATION_MS = 110 * 60 * 1000; // 自動終了までの時間（110分）
   const timetable = {
     mon: { 2: "英語総合3(B)", 3: "英語総合 ３", 4: "英語総合１(A)" },
     tue: { 1: "英語総合１(A)", 2: "英語総合１(A)", 4: "英語総合１(A)" },
@@ -150,7 +151,6 @@
   let viewingSessionId = "";
   let activeSessionId = "";
 
-  // タイムテーブルUI生成
   Object.keys(timetable).forEach(day => {
     const container = document.getElementById(`subjects-${day}`);
     for (let p = 1; p <= 4; p++) {
@@ -239,7 +239,6 @@
     startMonitoring(id);
   };
 
-  // フィルタ
   document.getElementById('filter-all-btn').onclick = function () {
     document.getElementById('questions-container').classList.remove('hide-answered');
     this.classList.add('active'); document.getElementById('filter-unanswered-btn').classList.remove('active');
@@ -254,8 +253,14 @@
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('dashboard-section').classList.remove('hidden');
       document.getElementById('user-info').textContent = user.email;
-      onValue(ref(db, 'active_session'), (snap) => {
+      onValue(ref(db, 'active_session'), async (snap) => {
         const val = snap.val();
+        // 期限切れの自動クリーンアップ
+        if (val && val.expiresAt && Date.now() > val.expiresAt) {
+          console.log("期限切れの講義を自動終了します:", val.id);
+          await remove(ref(db, 'active_session'));
+          return; // 削除後 onValue が val=null で再発火する
+        }
         activeSessionId = (val && val.isOpen) ? val.id : "";
         document.getElementById('end-lecture-btn').classList.toggle('hidden', !activeSessionId);
         updateStartButtonState();
@@ -266,7 +271,6 @@
     }
   });
 
-  // 出席行を安全に組み立てるヘルパー（XSS対策）
   function buildAttendanceRow(e) {
     const tr = document.createElement('tr');
     const td1 = document.createElement('td'); td1.textContent = e.studentId || "";
@@ -277,7 +281,6 @@
     return tr;
   }
 
-  // 質問カードを安全に組み立てるヘルパー（XSS対策）
   function buildQuestionCard(key, q) {
     const content = q.body || q.text || "(内容なし)";
     const isRead = (q.read !== undefined) ? q.read : (q.answered || false);
@@ -303,7 +306,7 @@
 
     const body = document.createElement('div');
     body.className = 'q-body';
-    body.textContent = content; // ← textContent でXSS無効化
+    body.textContent = content;
 
     card.appendChild(header);
     card.appendChild(body);
@@ -318,7 +321,7 @@
       const data = s.val() || {};
       const list = Object.values(data).sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
       document.getElementById('att-count').textContent = list.length;
-      attBody.replaceChildren(); // クリア
+      attBody.replaceChildren();
       list.forEach(e => attBody.appendChild(buildAttendanceRow(e)));
     });
 
@@ -336,7 +339,6 @@
     });
   }
 
-  // 検索結果行を安全に組み立てるヘルパー
   function buildSearchRow(r) {
     const tr = document.createElement('tr');
     const t1 = document.createElement('td'); t1.textContent = r.sid;
@@ -347,7 +349,6 @@
     return tr;
   }
 
-  // 横断検索（旧 text と 新 body の両方を検索対象に）
   document.getElementById('global-search-btn').onclick = async () => {
     const query = document.getElementById('global-search-input').value.toLowerCase().trim();
     if (!query) return;
@@ -395,17 +396,23 @@
     document.getElementById('search-results-area').classList.add('hidden');
   };
 
-  // 既読切替（read 項目のみ更新）
   window.toggleQ = (key, val) => update(ref(db, `questions/${viewingSessionId}/${key}`), { read: val });
 
   document.getElementById('start-lecture-btn').onclick = async () => {
     if (!viewingSessionId) return alert("回を選択してください。");
+    const title = document.getElementById('current-display-label').textContent;
+    if (!title || title === "科目を選択してください") {
+      return alert("回を選択してから開始してください。");
+    }
+    const now = Date.now();
     await set(ref(db, 'active_session'), {
       id: viewingSessionId,
-      title: document.getElementById('current-display-label').textContent,
-      isOpen: true
+      title: title,
+      isOpen: true,
+      startedAt: now,
+      expiresAt: now + LECTURE_DURATION_MS
     });
-    alert("講義を開始しました。");
+    alert(`講義を開始しました。\n（${LECTURE_DURATION_MS / 60000}分後に自動終了します）`);
   };
 
   document.getElementById('end-lecture-btn').onclick = async () => {
@@ -415,8 +422,7 @@
     }
   };
 
-    document.getElementById('export-csv-btn').onclick = async () => {
-    // 出席と質問を両方取得
+  document.getElementById('export-csv-btn').onclick = async () => {
     const [attSnap, qSnap] = await Promise.all([
       get(ref(db, `attendance/${viewingSessionId}`)),
       get(ref(db, `questions/${viewingSessionId}`))
@@ -424,8 +430,6 @@
     const attData = attSnap.val() || {};
     const qData = qSnap.val() || {};
 
-    // uid をキーに、質問本文を学生ごとに集約
-    // （uid が一致しない旧データに備え、studentId でも紐付けできるようマップを2系統用意）
     const qByUid = {};
     const qByStudentId = {};
     Object.values(qData).forEach(q => {
@@ -442,12 +446,10 @@
       }
     });
 
-    // 出席者を学籍番号でソート
     const list = Object.entries(attData)
       .map(([uid, e]) => ({ uid, ...e }))
       .sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
 
-    // CSVエスケープ
     const esc = (v) => {
       const s = String(v == null ? "" : v);
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -456,7 +458,6 @@
     let csv = "\uFEFF学籍番号,氏名,出席時刻,質問内容\n";
     list.forEach(e => {
       const sid = e.studentId ? String(e.studentId).toUpperCase() : "";
-      // まず uid 一致を優先、なければ studentId で補完
       const questions = (qByUid[e.uid] && qByUid[e.uid].length)
         ? qByUid[e.uid]
         : (qByStudentId[sid] || []);
