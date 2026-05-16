@@ -415,20 +415,56 @@
     }
   };
 
-  document.getElementById('export-csv-btn').onclick = async () => {
-    const snap = await get(ref(db, `attendance/${viewingSessionId}`));
-    const data = snap.val() || {};
-    let csv = "\uFEFF学籍番号,氏名,時刻\n";
-    Object.values(data)
-      .sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""))
-      .forEach(e => {
-        // CSVのカンマ・改行・引用符を安全にエスケープ
-        const esc = (v) => {
-          const s = String(v == null ? "" : v);
-          return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-        };
-        csv += `${esc(e.studentId)},${esc(e.name)},${esc(new Date(e.timestamp).toLocaleString())}\n`;
-      });
+    document.getElementById('export-csv-btn').onclick = async () => {
+    // 出席と質問を両方取得
+    const [attSnap, qSnap] = await Promise.all([
+      get(ref(db, `attendance/${viewingSessionId}`)),
+      get(ref(db, `questions/${viewingSessionId}`))
+    ]);
+    const attData = attSnap.val() || {};
+    const qData = qSnap.val() || {};
+
+    // uid をキーに、質問本文を学生ごとに集約
+    // （uid が一致しない旧データに備え、studentId でも紐付けできるようマップを2系統用意）
+    const qByUid = {};
+    const qByStudentId = {};
+    Object.values(qData).forEach(q => {
+      const content = (q.body || q.text || "").trim();
+      if (!content) return;
+      if (q.uid) {
+        if (!qByUid[q.uid]) qByUid[q.uid] = [];
+        qByUid[q.uid].push(content);
+      }
+      if (q.studentId) {
+        const sid = String(q.studentId).toUpperCase();
+        if (!qByStudentId[sid]) qByStudentId[sid] = [];
+        qByStudentId[sid].push(content);
+      }
+    });
+
+    // 出席者を学籍番号でソート
+    const list = Object.entries(attData)
+      .map(([uid, e]) => ({ uid, ...e }))
+      .sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
+
+    // CSVエスケープ
+    const esc = (v) => {
+      const s = String(v == null ? "" : v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    let csv = "\uFEFF学籍番号,氏名,出席時刻,質問内容\n";
+    list.forEach(e => {
+      const sid = e.studentId ? String(e.studentId).toUpperCase() : "";
+      // まず uid 一致を優先、なければ studentId で補完
+      const questions = (qByUid[e.uid] && qByUid[e.uid].length)
+        ? qByUid[e.uid]
+        : (qByStudentId[sid] || []);
+      const combined = questions.join(" / ");
+      const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleString() : "";
+      csv += `${esc(e.studentId)},${esc(e.name)},${esc(timeStr)},${esc(combined)}\n`;
+    });
+
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
