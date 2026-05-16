@@ -204,3 +204,9 @@
       alert("送信に失敗しました。ページを再読み込みするか、ログイン状態を確認してください。"); 
     }
   };
+
+  document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
+  document.getElementById('logout-btn').onclick = () => { if(confirm("ログアウトしますか？")) signOut(auth); };
+</script>
+</body>
+</html>
