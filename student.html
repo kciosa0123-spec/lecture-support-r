@@ -83,6 +83,9 @@
 
   let currentUser = null;
   let currentSessionId = null;
+  let wasInLecture = false;        // 直前まで講義中だったかのフラグ
+  let endedMessageTimer = null;    // 「終了しました」表示のタイマーID
+  let expiryWatcherStarted = false;
 
   onAuthStateChanged(auth, (user) => {
     if (user && user.email) {
@@ -93,7 +96,6 @@
       }
       currentUser = user;
 
-      // プロフィールの初期セット（ログイン時）
       const emailId = user.email.split('@')[0].toUpperCase();
       document.getElementById('student-id').value = localStorage.getItem('ryu_student_id') || emailId;
       document.getElementById('student-name').value = localStorage.getItem('ryu_student_name') || "";
@@ -101,29 +103,71 @@
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('main-section').classList.remove('hidden');
       monitorSession();
+      startExpiryWatcher();
     } else {
       document.getElementById('login-section').classList.remove('hidden');
       document.getElementById('main-section').classList.add('hidden');
     }
   });
 
+  function showWaitingMessage() {
+    document.getElementById('session-info').textContent = "教員による講義開始を待っています...";
+  }
+
+  function showLectureEndedMessage() {
+    const infoEl = document.getElementById('session-info');
+    infoEl.textContent = "講義は終了しました。お疲れさまでした。";
+    if (endedMessageTimer) clearTimeout(endedMessageTimer);
+    endedMessageTimer = setTimeout(showWaitingMessage, 3000);
+  }
+
   function monitorSession() {
     onValue(ref(db, 'active_session'), (snap) => {
       const val = snap.val();
-      const infoEl = document.getElementById('session-info');
       const areaEl = document.getElementById('interactive-area');
-      if (val && val.isOpen) {
+
+      // 期限切れ判定（DBノードが残っていても expiresAt 経過なら終了扱い）
+      const isExpired = !!(val && val.expiresAt && Date.now() > val.expiresAt);
+      const isActive = !!(val && val.isOpen && !isExpired);
+
+      if (isActive) {
         currentSessionId = val.id;
-        infoEl.innerText = "講義中：" + val.title;
+        document.getElementById('session-info').textContent = "講義中：" + (val.title || "（タイトル未設定）");
         areaEl.classList.remove('hidden');
+        wasInLecture = true;
         checkAttendanceStatus();
       } else {
         currentSessionId = null;
-        infoEl.innerText = "教員による講義開始を待っています...";
         areaEl.classList.add('hidden');
         setLock(false);
+        if (wasInLecture) {
+          showLectureEndedMessage();
+          wasInLecture = false;
+        } else {
+          showWaitingMessage();
+        }
       }
     });
+  }
+
+  // DBの onValue は値変化時のみ発火するため、期限切れを能動的にチェック
+  function startExpiryWatcher() {
+    if (expiryWatcherStarted) return;
+    expiryWatcherStarted = true;
+    setInterval(async () => {
+      if (!currentSessionId) return;
+      const snap = await get(ref(db, 'active_session'));
+      const val = snap.val();
+      if (val && val.expiresAt && Date.now() > val.expiresAt) {
+        currentSessionId = null;
+        document.getElementById('interactive-area').classList.add('hidden');
+        setLock(false);
+        if (wasInLecture) {
+          showLectureEndedMessage();
+          wasInLecture = false;
+        }
+      }
+    }, 30 * 1000); // 30秒ごと
   }
 
   async function checkAttendanceStatus() {
@@ -131,11 +175,11 @@
     const snap = await get(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`));
     const btn = document.getElementById('attendance-btn');
     if (snap.exists()) {
-      btn.innerText = "出席報告済み (Submitted)";
+      btn.textContent = "出席報告済み (Submitted)";
       btn.disabled = true;
       setLock(true);
     } else {
-      btn.innerText = "出席 (Attendance) を報告";
+      btn.textContent = "出席 (Attendance) を報告";
       btn.disabled = false;
       setLock(false);
     }
@@ -148,13 +192,11 @@
     document.getElementById('profile-ui').style.opacity = locked ? '0.7' : '1';
   }
 
-  // 出席報告ボタン
   document.getElementById('attendance-btn').onclick = async () => {
     let sid = document.getElementById('student-id').value.trim().toUpperCase();
     let sname = document.getElementById('student-name').value.trim();
     if (!sid || !sname) return alert("学籍番号と氏名を入力してください。");
 
-    // スペースの自動調整（全角→半角、重複削除）
     sname = sname.replace(/[\s　]+/g, ' ');
     if (!sname.includes(' ')) {
       if (!confirm("苗字と名前の間にスペースがありません。よろしいですか？（例：龍谷 太郎）")) return;
@@ -178,12 +220,10 @@
     }
   };
 
-  // メッセージ送信ボタン
   document.getElementById('send-btn').onclick = async () => {
     const bodyText = document.getElementById('question-text').value.trim();
     if (!bodyText || !currentSessionId) return;
 
-    // 入力欄から直接情報を取得（「名前なし」問題を防止）
     const sid = document.getElementById('student-id').value.trim().toUpperCase();
     const sname = document.getElementById('student-name').value.trim();
 
@@ -199,9 +239,10 @@
       });
 
       document.getElementById('question-text').value = "";
-      document.getElementById('send-status').innerText = "送信完了！";
-      document.getElementById('send-status').style.color = "#34a853";
-      setTimeout(() => { document.getElementById('send-status').innerText = ""; }, 3000);
+      const status = document.getElementById('send-status');
+      status.textContent = "送信完了！";
+      status.style.color = "#34a853";
+      setTimeout(() => { status.textContent = ""; }, 3000);
 
     } catch (e) {
       console.error(e);
