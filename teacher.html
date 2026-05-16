@@ -6,16 +6,12 @@
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f7f6; line-height: 1.6; }
     .box { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-    
-    /* タイムテーブル配置 */
     .timetable-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px; }
     .day-column { background: #ebedef; padding: 15px; border-radius: 8px; }
     .day-title { font-weight: bold; text-align: center; margin-bottom: 15px; color: #444; border-bottom: 2px solid #ccc; padding-bottom: 5px; }
     .period-slot { margin-bottom: 12px; min-height: 45px; }
     .period-label { font-size: 10px; color: #888; margin-bottom: 2px; }
     .empty-slot { border: 1px dashed #ccc; border-radius: 6px; height: 40px; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 11px; }
-
-    /* 科目・回数ボタン */
     .subject-btn { width: 100%; background: #fff; color: #333; border: 1px solid #bbb; padding: 8px; border-radius: 6px; text-align: left; font-size: 12px; cursor: pointer; transition: 0.2s; font-weight: bold; }
     .subject-btn:hover { background: #f0f0f0; border-color: #4285f4; }
     .subject-btn.active { background: #4285f4; color: #fff; border-color: #4285f4; }
@@ -23,19 +19,13 @@
     .session-btn { background: #eee; border: 1px solid #ccc; font-size: 10px; padding: 5px 0; border-radius: 4px; cursor: pointer; color: #666; font-weight: bold; }
     .session-btn.has-data { background: #34a853; color: #fff; border-color: #2d8a47; }
     .session-btn.selected { outline: 3px solid #ffc107; z-index: 1; }
-
-    /* 検索エリア */
     .search-area { background: #e3f2fd; border: 1px solid #90caf9; }
     #search-results-table { width: 100%; border-collapse: collapse; font-size: 12px; background: white; margin-top: 10px; }
     #search-results-table th { background: #1976d2; color: white; padding: 8px; }
     #search-results-table td { padding: 8px; border-bottom: 1px solid #eee; }
-
-    /* 質問カードとフィルタ */
     .question-card { background: white; border: 1px solid #ddd; border-left: 4px solid #4285f4; padding: 12px; margin-bottom: 10px; border-radius: 6px; position: relative; }
     .question-card.answered { border-left-color: #ccc; opacity: 0.6; background: #f9f9f9; }
     #questions-container.hide-answered .answered { display: none; }
-
-    /* ボタン類 */
     button { color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
     .btn-blue { background: #4285f4; }
     .btn-warning { background: #ffc107; color: #333; }
@@ -47,6 +37,11 @@
     .hidden { display: none; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+    .q-header { font-size:12px; color:#666; display:flex; justify-content:space-between; align-items:center; }
+    .q-body { font-weight:bold; margin-top:5px; white-space:pre-wrap; }
+    .q-toggle { padding:2px 8px; font-size:11px; border-radius:4px; border:none; cursor:pointer; }
+    .q-toggle.read { background:#ccc; color:#fff; }
+    .q-toggle.unread { background:#ffc107; color:#333; }
   </style>
 </head>
 <body>
@@ -58,7 +53,7 @@
   </div>
 
   <div id="dashboard-section" class="hidden">
-    
+
     <div class="box search-area">
       <div style="display: flex; gap: 10px; align-items: center;">
         <span style="font-weight: bold; font-size: 14px;">🗂️ 履歴検索:</span>
@@ -161,21 +156,21 @@
     for (let p = 1; p <= 4; p++) {
       const slot = document.createElement('div');
       slot.className = 'period-slot';
-      const label = document.createElement('div'); label.className = 'period-label'; label.innerText = `${p}限目`;
+      const label = document.createElement('div'); label.className = 'period-label'; label.textContent = `${p}限目`;
       slot.appendChild(label);
       if (timetable[day][p]) {
         const sub = timetable[day][p];
-        const btn = document.createElement('button'); btn.className = 'subject-btn'; btn.innerText = sub;
+        const btn = document.createElement('button'); btn.className = 'subject-btn'; btn.textContent = sub;
         btn.onclick = () => window.toggleSubject(btn, day, sub, p);
         const grid = document.createElement('div'); grid.className = 'session-grid-mini'; grid.id = `grid-${day}-${p}`;
-        for(let i=1; i<=15; i++) {
-          const b = document.createElement('button'); b.className = 'session-btn'; b.innerText = i; b.id = `btn-${day}-${p}-${i}`;
+        for (let i = 1; i <= 15; i++) {
+          const b = document.createElement('button'); b.className = 'session-btn'; b.textContent = i; b.id = `btn-${day}-${p}-${i}`;
           b.onclick = (e) => { e.stopPropagation(); window.loadSession(day, sub, p, i); };
           grid.appendChild(b);
         }
         slot.appendChild(btn); slot.appendChild(grid);
       } else {
-        const empty = document.createElement('div'); empty.className = 'empty-slot'; empty.innerText = "なし";
+        const empty = document.createElement('div'); empty.className = 'empty-slot'; empty.textContent = "なし";
         slot.appendChild(empty);
       }
       container.appendChild(slot);
@@ -193,52 +188,50 @@
   async function scanDataPresence(day, sub, p) {
     const snap = await get(ref(db, 'attendance'));
     const allAtt = snap.val() || {};
-    const dayName = {mon:"月", tue:"火", fri:"金"}[day];
-    for(let i=1; i<=15; i++) {
+    const dayName = { mon: "月", tue: "火", fri: "金" }[day];
+    for (let i = 1; i <= 15; i++) {
       const found = Object.keys(allAtt).find(id => id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`));
       const btn = document.getElementById(`btn-${day}-${p}-${i}`);
-      if(found) { btn.classList.add('has-data'); btn.dataset.actualId = found; }
+      if (found) { btn.classList.add('has-data'); btn.dataset.actualId = found; }
     }
   }
 
-  // 「講義中」の表示を更新する関数
   function updateStartButtonState() {
     const btn = document.getElementById('start-lecture-btn');
     if (!viewingSessionId) return;
-
     if (viewingSessionId === activeSessionId) {
-      btn.innerText = "講義中";
-      btn.className = "btn-success"; // 緑色
+      btn.textContent = "講義中";
+      btn.className = "btn-success";
     } else {
       const sessionBtn = document.querySelector('.session-btn.selected');
       if (sessionBtn && sessionBtn.classList.contains('has-data')) {
-        btn.innerText = "再開/更新";
+        btn.textContent = "再開/更新";
         btn.className = "btn-success";
       } else {
-        btn.innerText = "この回で講義を開始";
-        btn.className = "btn-warning"; // 黄色
+        btn.textContent = "この回で講義を開始";
+        btn.className = "btn-warning";
       }
     }
   }
 
   window.loadSession = (day, sub, p, num) => {
     const btn = document.getElementById(`btn-${day}-${p}-${num}`);
-    const dayName = {mon:"月", tue:"火", fri:"金"}[day];
+    const dayName = { mon: "月", tue: "火", fri: "金" }[day];
     const now = new Date();
-    const dStrToday = now.toISOString().slice(0,10).replace(/-/g,"");
+    const dStrToday = now.toISOString().slice(0, 10).replace(/-/g, "");
     const id = btn.dataset.actualId || `${dStrToday}_${dayName}${p}${sub}第${num}回`;
     viewingSessionId = id;
-    
+
     let dateLabel = "";
     const dateMatch = id.match(/^(\d{4})(\d{2})(\d{2})_/);
-    if(dateMatch) dateLabel = ` (${parseInt(dateMatch[2])}月${parseInt(dateMatch[3])}日)`;
-    else dateLabel = ` (${now.getMonth()+1}月${now.getDate()}日)`;
+    if (dateMatch) dateLabel = ` (${parseInt(dateMatch[2])}月${parseInt(dateMatch[3])}日)`;
+    else dateLabel = ` (${now.getMonth() + 1}月${now.getDate()}日)`;
 
     document.querySelectorAll('.session-btn').forEach(el => el.classList.remove('selected'));
     btn.classList.add('selected');
-    document.getElementById('current-display-label').innerText = `${dayName}曜${p}限：${sub} 【第${num}回】${dateLabel}`;
+    document.getElementById('current-display-label').textContent = `${dayName}曜${p}限：${sub} 【第${num}回】${dateLabel}`;
     document.getElementById('data-actions').classList.toggle('hidden', !btn.classList.contains('has-data'));
-    
+
     updateStartButtonState();
 
     off(ref(db, `attendance/${viewingSessionId}`));
@@ -247,11 +240,11 @@
   };
 
   // フィルタ
-  document.getElementById('filter-all-btn').onclick = function() {
+  document.getElementById('filter-all-btn').onclick = function () {
     document.getElementById('questions-container').classList.remove('hide-answered');
     this.classList.add('active'); document.getElementById('filter-unanswered-btn').classList.remove('active');
   };
-  document.getElementById('filter-unanswered-btn').onclick = function() {
+  document.getElementById('filter-unanswered-btn').onclick = function () {
     document.getElementById('questions-container').classList.add('hide-answered');
     this.classList.add('active'); document.getElementById('filter-all-btn').classList.remove('active');
   };
@@ -260,107 +253,195 @@
     if (user && user.email === TEACHER_EMAIL) {
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('dashboard-section').classList.remove('hidden');
-      document.getElementById('user-info').innerText = user.email;
+      document.getElementById('user-info').textContent = user.email;
       onValue(ref(db, 'active_session'), (snap) => {
         const val = snap.val();
-        // セッションが開いているときのみIDをセット
         activeSessionId = (val && val.isOpen) ? val.id : "";
         document.getElementById('end-lecture-btn').classList.toggle('hidden', !activeSessionId);
         updateStartButtonState();
       });
+    } else if (user) {
+      alert("教員アカウントではありません。");
+      signOut(auth);
     }
   });
+
+  // 出席行を安全に組み立てるヘルパー（XSS対策）
+  function buildAttendanceRow(e) {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td'); td1.textContent = e.studentId || "";
+    const td2 = document.createElement('td'); td2.textContent = e.name || "";
+    const td3 = document.createElement('td');
+    td3.textContent = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : "";
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+    return tr;
+  }
+
+  // 質問カードを安全に組み立てるヘルパー（XSS対策）
+  function buildQuestionCard(key, q) {
+    const content = q.body || q.text || "(内容なし)";
+    const isRead = (q.read !== undefined) ? q.read : (q.answered || false);
+
+    const card = document.createElement('div');
+    card.id = `q-${key}`;
+    card.className = `question-card ${isRead ? 'answered' : ''}`;
+
+    const header = document.createElement('div');
+    header.className = 'q-header';
+
+    const small = document.createElement('small');
+    const sid = q.studentId ? String(q.studentId).toUpperCase() : "";
+    const name = q.name || "";
+    small.textContent = (sid && name) ? `${sid} ${name}` : (q.email || "");
+    header.appendChild(small);
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = `q-toggle ${isRead ? 'read' : 'unread'}`;
+    toggleBtn.textContent = isRead ? '済' : '未';
+    toggleBtn.onclick = () => window.toggleQ(key, !isRead);
+    header.appendChild(toggleBtn);
+
+    const body = document.createElement('div');
+    body.className = 'q-body';
+    body.textContent = content; // ← textContent でXSS無効化
+
+    card.appendChild(header);
+    card.appendChild(body);
+    return card;
+  }
 
   function startMonitoring(sessionId) {
     const attBody = document.getElementById('att-list-body');
     const qCont = document.getElementById('questions-container');
+
     onValue(ref(db, `attendance/${sessionId}`), (s) => {
       const data = s.val() || {};
-      const list = Object.values(data).sort((a,b) => (a.studentId||"").localeCompare(b.studentId||""));
-      document.getElementById('att-count').innerText = list.length;
-      attBody.innerHTML = list.map(e => `<tr><td>${e.studentId}</td><td>${e.name}</td><td>${new Date(e.timestamp).toLocaleTimeString()}</td></tr>`).join('');
+      const list = Object.values(data).sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
+      document.getElementById('att-count').textContent = list.length;
+      attBody.replaceChildren(); // クリア
+      list.forEach(e => attBody.appendChild(buildAttendanceRow(e)));
     });
-    
+
     onValue(ref(db, `questions/${sessionId}`), (s) => {
       const data = s.val() || {};
       const keys = Object.keys(data).reverse();
-      qCont.innerHTML = keys.length ? "" : "質問はまだありません。";
-      keys.forEach(key => {
-        const q = data[key];
-        const card = document.createElement('div'); card.id = `q-${key}`;
-        
-        // --- ✨過去ログ互換性（body か text、read か answered）---
-        const content = q.body || q.text || "(内容なし)";
-        const isRead = (q.read !== undefined) ? q.read : (q.answered || false);
-        
-        card.className = `question-card ${isRead ? 'answered' : ''}`;
-        const header = (q.studentId && q.name) ? `${q.studentId.toUpperCase()} ${q.name}` : q.email;
-        card.innerHTML = `
-          <div style="font-size:12px; color:#666;">
-            <small>${header}</small>
-            <button onclick="window.toggleQ('${key}', ${!isRead})" 
-                    style="float:right; background:${isRead?'#ccc':'#ffc107'}; color:${isRead?'#fff':'#333'}; padding:2px 8px; font-size:11px; border-radius:4px;">
-              ${isRead ? '済' : '未'}
-            </button>
-          </div>
-          <div style="font-weight:bold; margin-top:5px; white-space:pre-wrap;">${content}</div>
-        `;
-        qCont.appendChild(card);
-      });
+      qCont.replaceChildren();
+      if (keys.length === 0) {
+        const empty = document.createElement('div');
+        empty.textContent = "質問はまだありません。";
+        qCont.appendChild(empty);
+        return;
+      }
+      keys.forEach(key => qCont.appendChild(buildQuestionCard(key, data[key])));
     });
   }
 
-  // 横断検索 (旧項目 text と 新項目 body の両方を検索対象にする)
+  // 検索結果行を安全に組み立てるヘルパー
+  function buildSearchRow(r) {
+    const tr = document.createElement('tr');
+    const t1 = document.createElement('td'); t1.textContent = r.sid;
+    const t2 = document.createElement('td'); t2.textContent = r.type;
+    const t3 = document.createElement('td'); t3.textContent = r.person;
+    const t4 = document.createElement('td'); t4.textContent = r.content;
+    tr.appendChild(t1); tr.appendChild(t2); tr.appendChild(t3); tr.appendChild(t4);
+    return tr;
+  }
+
+  // 横断検索（旧 text と 新 body の両方を検索対象に）
   document.getElementById('global-search-btn').onclick = async () => {
     const query = document.getElementById('global-search-input').value.toLowerCase().trim();
     if (!query) return;
-    const btn = document.getElementById('global-search-btn'); btn.innerText = "中..."; btn.disabled = true;
-    const [attSnap, qSnap] = await Promise.all([get(ref(db, 'attendance')), get(ref(db, 'questions'))]);
-    const results = [];
-    const allAtt = attSnap.val() || {};
-    Object.keys(allAtt).forEach(sid => Object.keys(allAtt[sid]).forEach(uid => {
-      const a = allAtt[sid][uid]; const comb = ((a.studentId||"") + (a.name||"") + (a.email||"")).toLowerCase();
-      if (comb.includes(query)) results.push({ sid, type: "出席", person: `${a.studentId} / ${a.name||'-'}`, content: "---", time: a.timestamp });
-    }));
-    const allQ = qSnap.val() || {};
-    Object.keys(allQ).forEach(sid => Object.keys(allQ[sid]).forEach(qid => {
-      const q = allQ[sid][qid]; 
-      const content = q.body || q.text || "";
-      const comb = ((q.name||"") + (q.studentId||"") + (q.email||"") + content).toLowerCase();
-      if (comb.includes(query)) results.push({ sid, type: "質問", person: q.email, content: content, time: q.timestamp });
-    }));
-    results.sort((a,b) => b.time - a.time);
-    const body = document.getElementById('search-results-body'); body.innerHTML = results.length ? "" : "<tr><td colspan='4'>なし</td></tr>";
-    results.forEach(r => { const row = document.createElement('tr'); row.innerHTML = `<td>${r.sid}</td><td>${r.type}</td><td>${r.person}</td><td>${r.content}</td>`; body.appendChild(row); });
-    document.getElementById('search-results-area').classList.remove('hidden'); btn.innerText = "検索"; btn.disabled = false;
-  };
-  document.getElementById('clear-search-btn').onclick = () => { document.getElementById('global-search-input').value = ""; document.getElementById('search-results-area').classList.add('hidden'); };
+    const btn = document.getElementById('global-search-btn');
+    btn.textContent = "中..."; btn.disabled = true;
+    try {
+      const [attSnap, qSnap] = await Promise.all([get(ref(db, 'attendance')), get(ref(db, 'questions'))]);
+      const results = [];
+      const allAtt = attSnap.val() || {};
+      Object.keys(allAtt).forEach(sid => Object.keys(allAtt[sid]).forEach(uid => {
+        const a = allAtt[sid][uid];
+        const comb = ((a.studentId || "") + (a.name || "") + (a.email || "")).toLowerCase();
+        if (comb.includes(query)) results.push({ sid, type: "出席", person: `${a.studentId} / ${a.name || '-'}`, content: "---", time: a.timestamp });
+      }));
+      const allQ = qSnap.val() || {};
+      Object.keys(allQ).forEach(sid => Object.keys(allQ[sid]).forEach(qid => {
+        const q = allQ[sid][qid];
+        const content = q.body || q.text || "";
+        const comb = ((q.name || "") + (q.studentId || "") + (q.email || "") + content).toLowerCase();
+        if (comb.includes(query)) results.push({ sid, type: "質問", person: q.email, content: content, time: q.timestamp });
+      }));
+      results.sort((a, b) => b.time - a.time);
 
-  // 更新時は新しいセキュリティルールに合わせて read 項目のみを更新
+      const body = document.getElementById('search-results-body');
+      body.replaceChildren();
+      if (results.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4; td.textContent = "なし";
+        tr.appendChild(td); body.appendChild(tr);
+      } else {
+        results.forEach(r => body.appendChild(buildSearchRow(r)));
+      }
+      document.getElementById('search-results-area').classList.remove('hidden');
+    } catch (e) {
+      console.error(e);
+      alert("検索に失敗しました。");
+    } finally {
+      btn.textContent = "検索"; btn.disabled = false;
+    }
+  };
+
+  document.getElementById('clear-search-btn').onclick = () => {
+    document.getElementById('global-search-input').value = "";
+    document.getElementById('search-results-area').classList.add('hidden');
+  };
+
+  // 既読切替（read 項目のみ更新）
   window.toggleQ = (key, val) => update(ref(db, `questions/${viewingSessionId}/${key}`), { read: val });
 
   document.getElementById('start-lecture-btn').onclick = async () => {
-    if(!viewingSessionId) return alert("回を選択してください。");
-    await set(ref(db, 'active_session'), { id: viewingSessionId, title: document.getElementById('current-display-label').innerText, isOpen: true });
+    if (!viewingSessionId) return alert("回を選択してください。");
+    await set(ref(db, 'active_session'), {
+      id: viewingSessionId,
+      title: document.getElementById('current-display-label').textContent,
+      isOpen: true
+    });
     alert("講義を開始しました。");
   };
 
   document.getElementById('end-lecture-btn').onclick = async () => {
-    if(confirm("講義を終了します。学生の画面を待機中に戻します。")) { await remove(ref(db, 'active_session')); location.reload(); }
+    if (confirm("講義を終了します。学生の画面を待機中に戻します。")) {
+      await remove(ref(db, 'active_session'));
+      location.reload();
+    }
   };
 
   document.getElementById('export-csv-btn').onclick = async () => {
     const snap = await get(ref(db, `attendance/${viewingSessionId}`));
     const data = snap.val() || {};
     let csv = "\uFEFF学籍番号,氏名,時刻\n";
-    Object.values(data).sort((a,b)=>a.studentId.localeCompare(b.studentId)).forEach(e => csv += `${e.studentId},${e.name},${new Date(e.timestamp).toLocaleString()}\n`);
+    Object.values(data)
+      .sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""))
+      .forEach(e => {
+        // CSVのカンマ・改行・引用符を安全にエスケープ
+        const esc = (v) => {
+          const s = String(v == null ? "" : v);
+          return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        csv += `${esc(e.studentId)},${esc(e.name)},${esc(new Date(e.timestamp).toLocaleString())}\n`;
+      });
     const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${viewingSessionId}.csv`; a.click();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${viewingSessionId}.csv`;
+    a.click();
   };
 
   document.getElementById('delete-btn').onclick = async () => {
-    if(confirm("この回のデータを完全に削除しますか？")) {
-      await Promise.all([remove(ref(db, `attendance/${viewingSessionId}`)), remove(ref(db, `questions/${viewingSessionId}`))]);
+    if (confirm("この回のデータを完全に削除しますか？")) {
+      await Promise.all([
+        remove(ref(db, `attendance/${viewingSessionId}`)),
+        remove(ref(db, `questions/${viewingSessionId}`))
+      ]);
       if (viewingSessionId === activeSessionId) await remove(ref(db, 'active_session'));
       location.reload();
     }
@@ -368,7 +449,7 @@
 
   document.getElementById('toggle-list-btn').onclick = () => document.getElementById('att-list-container').classList.toggle('hidden');
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
-  document.getElementById('logout-btn').onclick = () => signOut(auth).then(()=>location.reload());
+  document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => location.reload());
 </script>
 </body>
 </html>
