@@ -196,13 +196,23 @@
   }
 
   document.getElementById('attendance-btn').onclick = async () => {
+    const btn = document.getElementById('attendance-btn');
+    if (btn.disabled) return;     // 二度押し防止ガード
+    btn.disabled = true;           // 押した瞬間に即時フリーズ
+
     let sid = document.getElementById('student-id').value.trim().toUpperCase();
     let sname = document.getElementById('student-name').value.trim();
-    if (!sid || !sname) return alert("学籍番号と氏名を入力してください。");
+    if (!sid || !sname) {
+      btn.disabled = false;        // バリデーション失敗時はボタンを復帰
+      return alert("学籍番号と氏名を入力してください。");
+    }
 
     sname = sname.replace(/[\s　]+/g, ' ');
     if (!sname.includes(' ')) {
-      if (!confirm("苗字と名前の間にスペースがありません。よろしいですか？（例：龍谷 太郎）")) return;
+      if (!confirm("苗字と名前の間にスペースがありません。よろしいですか？（例：龍谷 太郎）")) {
+        btn.disabled = false;      // キャンセル時はボタンを復帰
+        return;
+      }
     }
 
     try {
@@ -219,7 +229,15 @@
       alert("出席を報告しました。");
     } catch (e) {
       console.error(e);
-      alert("エラー: 送信できませんでした。");
+      // エラー発生時、ルールによる拒否（すでに裏で1回目が成功しているか）を検証
+      const snap = await get(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`));
+      if (snap.exists()) {
+        checkAttendanceStatus();   // 画面を正常な「出席済み」に同期
+        alert("出席は既に記録されています。ご安心ください。");
+      } else {
+        btn.disabled = false;      // 本当に通話・サーバーエラーで失敗した場合のみ再試行を許可
+        alert("エラー: 送信できませんでした。もう一度お試しください。");
+      }
     }
   };
 
