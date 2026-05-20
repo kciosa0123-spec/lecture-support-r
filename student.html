@@ -230,14 +230,18 @@
     } catch (e) {
       console.error(e);
       // エラー発生時、ルールによる拒否（すでに裏で1回目が成功しているか）を検証
-      const snap = await get(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`));
-      if (snap.exists()) {
-        checkAttendanceStatus();   // 画面を正常な「出席済み」に同期
-        alert("出席は既に記録されています。ご安心ください。");
-      } else {
-        btn.disabled = false;      // 本当に通話・サーバーエラーで失敗した場合のみ再試行を許可
-        alert("エラー: 送信できませんでした。もう一度お試しください。");
+      try {
+        const snap = await get(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`));
+        if (snap.exists()) {
+          checkAttendanceStatus();   // 画面を正常な「出席済み」に同期
+          alert("出席は既に記録されています。ご安心ください。");
+          return;
+        }
+      } catch (e2) {
+        console.error(e2);
       }
+      btn.disabled = false;      // 本当に通信・サーバーエラーで失敗した場合のみ再試行を許可
+      alert("エラー: 送信できませんでした。もう一度お試しください。");
     }
   };
 
