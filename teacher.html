@@ -76,4 +76,483 @@
       <div class="box search-area">
         <div style="display: flex; gap: 5px; align-items: center;">
           <input type="text" id="global-search-input" placeholder="学籍番号、氏名、質問内容で検索..." style="flex:1; padding: 6px; border-radius: 5px; border: 1px solid #ccc; font-size: 12px;">
-          <button id="global-search-btn" class="btn-blue
+          <button id="global-search-btn" class="btn-blue" style="padding: 6px 10px; font-size: 12px;">検索</button>
+          <button id="clear-search-btn" class="btn-secondary" style="padding: 6px 10px; font-size: 12px;">クリア</button>
+        </div>
+        <div id="search-results-area" class="hidden" style="max-height: 200px; overflow-y: auto; margin-top: 10px; border-top: 1px solid #90caf9;">
+          <table id="search-results-table">
+            <thead><tr><th>講義</th><th>タイプ</th><th>学生</th><th>内容</th></tr></thead>
+            <tbody id="search-results-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="timetable-grid">
+        <div class="day-column"><div class="day-title">月曜日</div><div id="subjects-mon"></div></div>
+        <div class="day-column"><div class="day-title">火曜日</div><div id="subjects-tue"></div></div>
+        <div class="day-column"><div class="day-title">金曜日</div><div id="subjects-fri"></div></div>
+      </div>
+    </div>
+
+    <div class="box" id="active-panel" style="border-top: 5px solid #4285f4; padding: 10px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div>
+          <span style="font-size: 10px; color: #666;">選択中:</span>
+          <h3 id="current-display-label" style="margin: 0; font-size: 14px; color: #111;">科目を選択してください</h3>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 5px;">
+          <div id="data-actions" class="hidden">
+            <button id="export-csv-btn" class="btn-success" style="padding: 6px 10px; font-size: 12px;">CSV</button>
+            <button id="delete-btn" class="btn-danger" style="padding: 6px 10px; font-size: 12px; margin-left:5px;">削除</button>
+          </div>
+          <div id="start-actions">
+            <button id="start-lecture-btn" class="btn-warning" style="padding: 6px 10px; font-size: 12px;">講義開始</button>
+            <button id="end-lecture-btn" class="btn-danger hidden" style="padding: 6px 10px; font-size: 12px;">終了</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="box" style="padding: 10px;">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 8px; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 13px; font-weight: bold;">出席: <span id="att-count" style="color:#28a745; font-size:1.2em;">0</span> 名</span>
+          <div style="display: flex; gap: 3px;">
+            <button id="filter-all-btn" class="btn-outline active">すべて</button>
+            <button id="filter-unanswered-btn" class="btn-outline">未回答</button>
+          </div>
+        </div>
+        <button id="toggle-list-btn" class="btn-secondary" style="padding: 4px 8px; font-size: 11px;">名簿</button>
+      </div>
+      <div id="att-list-container" class="hidden" style="max-height: 150px; overflow-y: auto; margin-bottom: 10px;">
+        <table>
+          <thead><tr><th>学籍番号</th><th>氏名</th><th>時刻</th></tr></thead>
+          <tbody id="att-list-body"></tbody>
+        </table>
+      </div>
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 8px 0;">
+      <div id="questions-container"></div>
+    </div>
+
+    <div style="text-align: right; margin-top: 15px;">
+      <span id="user-info" style="font-size: 10px; color: #999; margin-right: 5px;"></span>
+      <button id="logout-btn" class="btn-secondary" style="font-size: 10px; padding: 3px 8px;">ログアウト</button>
+    </div>
+  </div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+  import { getDatabase, ref, set, get, onValue, update, remove, off } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
+    authDomain: "lecture-support.firebaseapp.com",
+    databaseURL: "https://lecture-support-default-rtdb.firebaseio.com",
+    projectId: "lecture-support",
+    storageBucket: "lecture-support.firebasestorage.app",
+    messagingSenderId: "285290664467",
+    appId: "1:285290664467:web:b39a07bbb08da6fc45a5e6"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getDatabase(app);
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
+
+  const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
+  const LECTURE_DURATION_MS = 110 * 60 * 1000;
+  const timetable = {
+    mon: { 2: "英語総合3(B)", 3: "英語総合 ３", 4: "英語総合１(A)" },
+    tue: { 1: "英語総合１(A)", 2: "英語総合１(A)", 4: "英語総合１(A)" },
+    fri: { 1: "英語総合１(B)", 2: "英語総合１(B)", 3: "英語総合 ３", 4: "英語総合 ３" }
+  };
+
+  let viewingSessionId = "";
+  let activeSessionId = "";
+
+  let attListener = null;
+  let attListenerRef = null;
+  let qListener = null;
+  let qListenerRef = null;
+
+  function detachListeners() {
+    if (attListenerRef && attListener) { off(attListenerRef, attListener); attListener = null; attListenerRef = null; }
+    if (qListenerRef   && qListener)   { off(qListenerRef,   qListener);   qListener   = null; qListenerRef   = null; }
+  }
+
+  // 新機能: 時間割エリアの開閉トグルロジック
+  const toggleBtn = document.getElementById('timetable-toggle-btn');
+  const wrapper = document.getElementById('timetable-wrapper');
+  toggleBtn.onclick = () => {
+    if (wrapper.style.display === 'none') {
+      wrapper.style.display = 'block';
+      toggleBtn.textContent = '📅 時間割選択エリアを隠す';
+      toggleBtn.style.background = '#6c757d';
+    } else {
+      wrapper.style.display = 'none';
+      toggleBtn.textContent = '📂 時間割選択エリアを表示する';
+      toggleBtn.style.background = '#4285f4';
+    }
+  };
+
+  // 時間割グリッドを構築
+  Object.keys(timetable).forEach(day => {
+    const container = document.getElementById(`subjects-${day}`);
+    for (let p = 1; p <= 4; p++) {
+      const slot = document.createElement('div');
+      slot.className = 'period-slot';
+      const label = document.createElement('div'); label.className = 'period-label'; label.textContent = `${p}限`;
+      slot.appendChild(label);
+      if (timetable[day][p]) {
+        const sub = timetable[day][p];
+        const btn = document.createElement('button'); btn.className = 'subject-btn'; btn.textContent = sub;
+        btn.onclick = () => window.toggleSubject(btn, day, sub, p);
+        const grid = document.createElement('div'); grid.className = 'session-grid-mini'; grid.id = `grid-${day}-${p}`;
+        for (let i = 1; i <= 15; i++) {
+          const b = document.createElement('button'); b.className = 'session-btn'; b.textContent = i; b.id = `btn-${day}-${p}-${i}`;
+          b.onclick = (e) => { e.stopPropagation(); window.loadSession(day, sub, p, i); };
+          grid.appendChild(b);
+        }
+        slot.appendChild(btn); slot.appendChild(grid);
+      } else {
+        const empty = document.createElement('div'); empty.className = 'empty-slot'; empty.textContent = "-";
+        slot.appendChild(empty);
+      }
+      container.appendChild(slot);
+    }
+  });
+
+  window.toggleSubject = (btn, day, sub, p) => {
+    const targetGrid = document.getElementById(`grid-${day}-${p}`);
+    const isAlreadyOpen = targetGrid.style.display === 'grid';
+    document.querySelectorAll('.session-grid-mini').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.subject-btn').forEach(el => el.classList.remove('active'));
+    if (!isAlreadyOpen) { targetGrid.style.display = 'grid'; btn.classList.add('active'); scanDataPresence(day, sub, p); }
+  };
+
+  async function scanDataPresence(day, sub, p) {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const res = await fetch(
+        `https://lecture-support-default-rtdb.firebaseio.com/attendance.json?shallow=true&auth=${token}`
+      );
+      if (!res.ok) return;
+      const keys = await res.json();
+      if (!keys) return;
+
+      const dayName = { mon: "月", tue: "火", fri: "金" }[day];
+      for (let i = 1; i <= 15; i++) {
+        const btn = document.getElementById(`btn-${day}-${p}-${i}`);
+        if (btn.dataset.actualId) return;
+        const found = Object.keys(keys).find(id =>
+          id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`)
+        );
+        if (found) { btn.classList.add('has-data'); btn.dataset.actualId = found; }
+      }
+    } catch (e) {
+      console.warn("scanDataPresence failed:", e);
+    }
+  }
+
+  function updateStartButtonState() {
+    const btn = document.getElementById('start-lecture-btn');
+    if (!viewingSessionId) return;
+    if (viewingSessionId === activeSessionId) {
+      btn.textContent = "講義中(更新)";
+      btn.className = "btn-success";
+    } else {
+      const sessionBtn = document.querySelector('.session-btn.selected');
+      if (sessionBtn && sessionBtn.classList.contains('has-data')) {
+        btn.textContent = "再開/更新";
+        btn.className = "btn-success";
+      } else {
+        btn.textContent = "講義開始";
+        btn.className = "btn-warning";
+      }
+    }
+  }
+
+  window.loadSession = (day, sub, p, num) => {
+    const btn = document.getElementById(`btn-${day}-${p}-${num}`);
+    const dayName = { mon: "月", tue: "火", fri: "金" }[day];
+    const now = new Date();
+    const dStrToday = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const id = btn.dataset.actualId || `${dStrToday}_${dayName}${p}${sub}第${num}回`;
+
+    detachListeners();
+    viewingSessionId = id;
+
+    let dateLabel = "";
+    const dateMatch = id.match(/^(\d{4})(\d{2})(\d{2})_/);
+    if (dateMatch) dateLabel = ` (${parseInt(dateMatch[2])}月${parseInt(dateMatch[3])}日)`;
+    else dateLabel = ` (${now.getMonth() + 1}月${now.getDate()}日)`;
+
+    document.querySelectorAll('.session-btn').forEach(el => el.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('current-display-label').textContent = `${dayName}曜${p}限：${sub} 【第${num}回】${dateLabel}`;
+    document.getElementById('data-actions').classList.toggle('hidden', !btn.classList.contains('has-data'));
+
+    updateStartButtonState();
+    startMonitoring(id);
+
+    // ✨ 改善UX: 回を選択したら自動的に時間割を閉じて画面を広くする
+    wrapper.style.display = 'none';
+    toggleBtn.textContent = '📂 時間割選択エリアを表示する';
+    toggleBtn.style.background = '#4285f4';
+  };
+
+  document.getElementById('filter-all-btn').onclick = function () {
+    document.getElementById('questions-container').classList.remove('hide-answered');
+    this.classList.add('active'); document.getElementById('filter-unanswered-btn').classList.remove('active');
+  };
+  document.getElementById('filter-unanswered-btn').onclick = function () {
+    document.getElementById('questions-container').classList.add('hide-answered');
+    this.classList.add('active'); document.getElementById('filter-all-btn').classList.remove('active');
+  };
+
+  onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    document.getElementById('dashboard-section').classList.add('hidden');
+    document.getElementById('login-section').classList.remove('hidden');
+    return;
+  }
+    if (user && user.email === TEACHER_EMAIL) {
+      document.getElementById('login-section').classList.add('hidden');
+      document.getElementById('dashboard-section').classList.remove('hidden');
+      document.getElementById('user-info').textContent = user.email;
+      onValue(ref(db, 'active_session'), async (snap) => {
+        const val = snap.val();
+        if (val && val.expiresAt && Date.now() > val.expiresAt) {
+          await remove(ref(db, 'active_session'));
+          return;
+        }
+        activeSessionId = (val && val.isOpen) ? val.id : "";
+        document.getElementById('end-lecture-btn').classList.toggle('hidden', !activeSessionId);
+        updateStartButtonState();
+      });
+    } else if (user) {
+      alert("教員アカウントではありません。");
+      signOut(auth);
+    }
+  });
+
+  function buildAttendanceRow(e) {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td'); td1.textContent = e.studentId || "";
+    const td2 = document.createElement('td'); td2.textContent = e.name || "";
+    const td3 = document.createElement('td');
+    td3.textContent = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : "";
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+    return tr;
+  }
+
+  function buildQuestionCard(key, q) {
+    const content = q.body || q.text || "(内容なし)";
+    const isRead = (q.read !== undefined) ? q.read : (q.answered || false);
+
+    const card = document.createElement('div');
+    card.id = `q-${key}`;
+    card.className = `question-card ${isRead ? 'answered' : ''}`;
+
+    const header = document.createElement('div');
+    header.className = 'q-header';
+
+    const small = document.createElement('small');
+    const sid = q.studentId ? String(q.studentId).toUpperCase() : "";
+    const name = q.name || "";
+    small.textContent = (sid && name) ? `${sid} ${name}` : (q.email || "");
+    header.appendChild(small);
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = `q-toggle ${isRead ? 'read' : 'unread'}`;
+    toggleBtn.textContent = isRead ? '済' : '未';
+    toggleBtn.onclick = () => update(ref(db, `questions/${viewingSessionId}/${key}`), { read: !isRead });
+    header.appendChild(toggleBtn);
+
+    const body = document.createElement('div');
+    body.className = 'q-body';
+    body.textContent = content;
+
+    card.appendChild(header);
+    card.appendChild(body);
+    return card;
+  }
+
+  function startMonitoring(sessionId) {
+    const attBody = document.getElementById('att-list-body');
+    const qCont = document.getElementById('questions-container');
+
+    attListenerRef = ref(db, `attendance/${sessionId}`);
+    attListener = onValue(attListenerRef, (s) => {
+      const data = s.val() || {};
+      const list = Object.values(data).sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
+      document.getElementById('att-count').textContent = list.length;
+      attBody.replaceChildren();
+      list.forEach(e => attBody.appendChild(buildAttendanceRow(e)));
+    });
+
+    qListenerRef = ref(db, `questions/${sessionId}`);
+    qListener = onValue(qListenerRef, (s) => {
+      const data = s.val() || {};
+      const keys = Object.keys(data).reverse();
+      qCont.replaceChildren();
+      if (keys.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.fontSize = "12px";
+        empty.style.color = "#888";
+        empty.textContent = "質問はまだありません。";
+        qCont.appendChild(empty);
+        return;
+      }
+      keys.forEach(key => qCont.appendChild(buildQuestionCard(key, data[key])));
+    });
+  }
+
+  function buildSearchRow(r) {
+    const tr = document.createElement('tr');
+    const t1 = document.createElement('td'); t1.textContent = r.sid;
+    const t2 = document.createElement('td'); t2.textContent = r.type;
+    const t3 = document.createElement('td'); t3.textContent = r.person;
+    const t4 = document.createElement('td'); t4.textContent = r.content;
+    tr.appendChild(t1); tr.appendChild(t2); tr.appendChild(t3); tr.appendChild(t4);
+    return tr;
+  }
+
+  document.getElementById('global-search-btn').onclick = async () => {
+    const query = document.getElementById('global-search-input').value.toLowerCase().trim();
+    if (!query) return;
+    const btn = document.getElementById('global-search-btn');
+    btn.textContent = "..."; btn.disabled = true;
+    try {
+      const [attSnap, qSnap] = await Promise.all([get(ref(db, 'attendance')), get(ref(db, 'questions'))]);
+      const results = [];
+      const allAtt = attSnap.val() || {};
+      Object.keys(allAtt).forEach(sid => Object.keys(allAtt[sid]).forEach(uid => {
+        const a = allAtt[sid][uid];
+        const comb = ((a.studentId || "") + (a.name || "") + (a.email || "")).toLowerCase();
+        if (comb.includes(query)) results.push({ sid, type: "出席", person: `${a.studentId} / ${a.name || '-'}`, content: "---", time: a.timestamp });
+      }));
+      const allQ = qSnap.val() || {};
+      Object.keys(allQ).forEach(sid => Object.keys(allQ[sid]).forEach(qid => {
+        const q = allQ[sid][qid];
+        const content = q.body || q.text || "";
+        const comb = ((q.name || "") + (q.studentId || "") + (q.email || "") + content).toLowerCase();
+        if (comb.includes(query)) results.push({ sid, type: "質問", person: `${q.studentId || ''} / ${q.name || q.email || ''}`, content: content, time: q.timestamp });
+      }));
+      results.sort((a, b) => b.time - a.time);
+
+      const body = document.getElementById('search-results-body');
+      body.replaceChildren();
+      if (results.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4; td.textContent = "なし";
+        tr.appendChild(td); body.appendChild(tr);
+      } else {
+        results.forEach(r => body.appendChild(buildSearchRow(r)));
+      }
+      document.getElementById('search-results-area').classList.remove('hidden');
+    } catch (e) {
+      console.error(e);
+      alert("検索に失敗しました。");
+    } finally {
+      btn.textContent = "検索"; btn.disabled = false;
+    }
+  };
+
+  document.getElementById('clear-search-btn').onclick = () => {
+    document.getElementById('global-search-input').value = "";
+    document.getElementById('search-results-area').classList.add('hidden');
+  };
+
+  document.getElementById('start-lecture-btn').onclick = async () => {
+    if (!viewingSessionId) return alert("回を選択してください。");
+    const title = document.getElementById('current-display-label').textContent;
+    if (!title || title === "科目を選択してください") {
+      return alert("回を選択してから開始してください。");
+    }
+
+    if (activeSessionId && activeSessionId !== viewingSessionId) {
+      if (!confirm(`別の講義「${activeSessionId}」が進行中です。\nこの回に切り替えますか？`)) return;
+    }
+
+    const now = Date.now();
+    await set(ref(db, 'active_session'), {
+      id: viewingSessionId,
+      title: title,
+      isOpen: true,
+      startedAt: now,
+      expiresAt: now + LECTURE_DURATION_MS
+    });
+    alert(`講義を開始しました。`);
+  };
+
+  document.getElementById('end-lecture-btn').onclick = async () => {
+    if (confirm("講義を終了します。学生の画面を待機中に戻します。")) {
+      await remove(ref(db, 'active_session'));
+      location.reload();
+    }
+  };
+
+  document.getElementById('export-csv-btn').onclick = async () => {
+    const [attSnap, qSnap] = await Promise.all([
+      get(ref(db, `attendance/${viewingSessionId}`)),
+      get(ref(db, `questions/${viewingSessionId}`))
+    ]);
+    const attData = attSnap.val() || {};
+    const qData = qSnap.val() || {};
+
+    const qByUid = {};
+    Object.values(qData).forEach(q => {
+      const content = (q.body || q.text || "").trim();
+      if (!content || !q.uid) return;
+      if (!qByUid[q.uid]) qByUid[q.uid] = [];
+      qByUid[q.uid].push(content);
+    });
+
+    const list = Object.entries(attData)
+      .map(([uid, e]) => ({ uid, ...e }))
+      .sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
+
+    const esc = (v) => {
+      const s = String(v == null ? "" : v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    let csv = "\uFEFF学籍番号,氏名,出席時刻,質問内容\n";
+    list.forEach(e => {
+      const questions = qByUid[e.uid] || [];
+      const combined = questions.join(" / ");
+      const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleString() : "";
+      csv += `${esc(e.studentId)},${esc(e.name)},${esc(timeStr)},${esc(combined)}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${viewingSessionId}.csv`;
+    a.click();
+  };
+
+  document.getElementById('delete-btn').onclick = async () => {
+    if (confirm("この回のデータを完全に削除しますか？")) {
+      detachListeners();
+      await Promise.all([
+        remove(ref(db, `attendance/${viewingSessionId}`)),
+        remove(ref(db, `questions/${viewingSessionId}`))
+      ]);
+      if (viewingSessionId === activeSessionId) await remove(ref(db, 'active_session'));
+      location.reload();
+    }
+  };
+
+  document.getElementById('toggle-list-btn').onclick = () => document.getElementById('att-list-container').classList.toggle('hidden');
+  document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
+  document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => location.reload());
+</script>
+</body>
+</html>
