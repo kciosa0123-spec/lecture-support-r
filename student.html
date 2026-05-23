@@ -10,26 +10,16 @@
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #f0f2f5; line-height: 1.5; }
     .box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    
-    /* 変更: h1のテキストカラーをブルーからレッド(#c00)に変更 */
     h1 { font-size: 1.2rem; color: #c00; margin-top: 0; text-align: center; }
-    
     label { font-size: 0.85rem; color: #555; font-weight: bold; display: block; margin-bottom: 5px; }
     input, textarea { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
     input:disabled { background: #f9f9f9; color: #888; cursor: not-allowed; border-color: #eee; }
     button { width: 100%; padding: 12px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; transition: 0.3s; }
-    
     #attendance-btn { background: #34a853; color: white; }
     #attendance-btn:disabled { background: #ccc; cursor: not-allowed; }
-    
-    /* 変更: 送信ボタンのカラーをブルーからレッド(#c00)に変更 */
     #send-btn { background: #c00; color: white; }
-    
     .status-msg { font-size: 0.85rem; text-align: center; color: #d93025; margin-top: 5px; min-height: 1.2rem; }
-    
-    /* 変更: セッション情報（待機中など）の帯カラーを薄い赤系に変更 */
     #session-info { background: #fee; color: #c00; padding: 12px; border-radius: 6px; font-weight: bold; margin-bottom: 20px; text-align: center; font-size: 0.9rem; border: 1px solid #fcc; }
-    
     .hidden { display: none; }
     .profile-box { background: #fffbe6; border: 1px solid #ffe58f; }
   </style>
@@ -105,6 +95,15 @@
   let endedMessageTimer = null;
   let expiryWatcherStarted = false;
 
+  // ✅ 修正: 質問リスナーの解除関数をまとめて管理する配列
+  let questionUnsubscribers = [];
+
+  // セッション終了時に全質問リスナーを解除する
+  function detachQuestionListeners() {
+    questionUnsubscribers.forEach(unsub => unsub());
+    questionUnsubscribers = [];
+  }
+
   onAuthStateChanged(auth, (user) => {
     if (user && user.email) {
       if (!user.email.endsWith("@mail.ryukoku.ac.jp")) {
@@ -158,6 +157,11 @@
         areaEl.classList.add('hidden');
         setLock(false);
         document.getElementById('question-section').classList.add('hidden');
+        // ✅ 修正: 講義終了時に全質問リスナーを解除
+        detachQuestionListeners();
+        // ✅ 修正: 講義終了時に送信履歴表示をリセット
+        document.getElementById('my-questions-container').classList.add('hidden');
+        document.getElementById('my-questions-list').replaceChildren();
         if (wasInLecture) {
           showLectureEndedMessage();
           wasInLecture = false;
@@ -180,6 +184,10 @@
         document.getElementById('interactive-area').classList.add('hidden');
         setLock(false);
         document.getElementById('question-section').classList.add('hidden');
+        // ✅ 修正: 期限切れ時にも全質問リスナーを解除
+        detachQuestionListeners();
+        document.getElementById('my-questions-container').classList.add('hidden');
+        document.getElementById('my-questions-list').replaceChildren();
         if (wasInLecture) {
           showLectureEndedMessage();
           wasInLecture = false;
@@ -259,7 +267,6 @@
     }
   };
 
-  // 質問・メッセージ送信処理（教員の確認ステータスをリアルタイム監視する新機能）
   document.getElementById('send-btn').onclick = async () => {
     const bodyText = document.getElementById('question-text').value.trim();
     if (!bodyText || !currentSessionId) return;
@@ -268,10 +275,8 @@
     const sname = document.getElementById('student-name').value.trim();
 
     try {
-      // 新しい質問データの参照（箱）を先に作る
       const newQuestionRef = push(ref(db, `questions/${currentSessionId}`));
-      
-      // 作った箱にデータを保存
+
       await set(newQuestionRef, {
         uid: currentUser.uid,
         email: currentUser.email,
@@ -288,42 +293,39 @@
       status.style.color = "#34a853";
       setTimeout(() => { status.textContent = ""; }, 3000);
 
-      // 送信履歴を画面に表示し、リアルタイム監視を開始
+      // 送信履歴カードを表示
       document.getElementById('my-questions-container').classList.remove('hidden');
       const qList = document.getElementById('my-questions-list');
-      
+
       const qCard = document.createElement('div');
-      qCard.style.background = '#f8f9fa';
-      qCard.style.border = '1px solid #ddd';
-      qCard.style.padding = '10px';
-      qCard.style.borderRadius = '8px';
-      qCard.style.fontSize = '14px';
-      qCard.style.textAlign = 'left';
-      
+      qCard.style.cssText = 'background:#f8f9fa; border:1px solid #ddd; padding:10px; border-radius:8px; font-size:14px; text-align:left;';
+
       const qBody = document.createElement('div');
       qBody.textContent = bodyText;
       qCard.appendChild(qBody);
-      
+
       const qStatus = document.createElement('div');
-      qStatus.style.fontSize = '11px';
-      qStatus.style.marginTop = '6px';
-      qStatus.style.fontWeight = 'bold';
-      qStatus.style.color = '#888';
+      qStatus.style.cssText = 'font-size:11px; margin-top:6px; font-weight:bold; color:#888;';
       qStatus.textContent = "⏳ 教員の確認待ち...";
       qCard.appendChild(qStatus);
-      
-      qList.prepend(qCard); // 一番上に追加
 
-      // 先生が「済」ボタンを押した瞬間を監視
-      onValue(newQuestionRef, (snap) => {
+      qList.prepend(qCard);
+
+      // ✅ 修正: onValue の戻り値（解除関数）を配列で管理
+      const unsubscribe = onValue(newQuestionRef, (snap) => {
         const data = snap.val();
         if (data && data.read === true) {
           qStatus.textContent = "✅ 教員が確認しました";
           qStatus.style.color = "#34a853";
-          qCard.style.background = "#e6f4ea"; // 確認済みは薄い緑色に変化
+          qCard.style.background = "#e6f4ea";
           qCard.style.borderColor = "#c6e1d0";
+          // ✅ 修正: 確認済みになったら即座にリスナーを解除
+          unsubscribe();
+          questionUnsubscribers = questionUnsubscribers.filter(f => f !== unsubscribe);
         }
       });
+      // ✅ 修正: 解除関数を管理配列に追加
+      questionUnsubscribers.push(unsubscribe);
 
     } catch (e) {
       console.error(e);
