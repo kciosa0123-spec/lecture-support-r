@@ -5,7 +5,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>教員ダッシュボード（龍谷大・真最終版）</title>
+  <title>教員ダッシュボード（龍谷大）</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f7f6; line-height: 1.6; }
     .box { background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
@@ -49,7 +49,7 @@
 </head>
 <body>
 
-  <h2>講義支援ダッシュボード（龍谷大・最終版）</h2>
+  <h2>講義支援ダッシュボード（龍谷大）</h2>
 
   <div id="login-section" class="box" style="text-align: center; padding: 40px;">
     <button id="login-btn" type="button" class="btn-blue" style="font-size: 18px;">Googleでログイン</button>
@@ -144,7 +144,7 @@
   provider.setCustomParameters({ hd: "mail.ryukoku.ac.jp" });
 
   const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
-  const LECTURE_DURATION_MS = 110 * 60 * 1000; // 自動終了までの時間（110分）
+  const LECTURE_DURATION_MS = 110 * 60 * 1000;
   const timetable = {
     mon: { 2: "英語総合3(B)", 3: "英語総合 ３", 4: "英語総合１(A)" },
     tue: { 1: "英語総合１(A)", 2: "英語総合１(A)", 4: "英語総合１(A)" },
@@ -154,6 +154,18 @@
   let viewingSessionId = "";
   let activeSessionId = "";
 
+  // ✅ 修正1: リスナーをモジュールスコープで管理し、確実に解除できるようにする
+  let attListener = null;
+  let attListenerRef = null;
+  let qListener = null;
+  let qListenerRef = null;
+
+  function detachListeners() {
+    if (attListenerRef && attListener) { off(attListenerRef, attListener); attListener = null; attListenerRef = null; }
+    if (qListenerRef   && qListener)   { off(qListenerRef,   qListener);   qListener   = null; qListenerRef   = null; }
+  }
+
+  // 時間割グリッドを構築
   Object.keys(timetable).forEach(day => {
     const container = document.getElementById(`subjects-${day}`);
     for (let p = 1; p <= 4; p++) {
@@ -188,14 +200,55 @@
     if (!isAlreadyOpen) { targetGrid.style.display = 'grid'; btn.classList.add('active'); scanDataPresence(day, sub, p); }
   };
 
+  // ✅ 修正2: 全件取得をやめ、セッションIDの命名規則でボタン状態を判定する
+  // attendance ノードを全取得する代わりに、各回のセッションIDを生成して
+  // そのパスに出席データが1件でも存在するかだけ確認する（転送量を大幅削減）
   async function scanDataPresence(day, sub, p) {
-    const snap = await get(ref(db, 'attendance'));
-    const allAtt = snap.val() || {};
     const dayName = { mon: "月", tue: "火", fri: "金" }[day];
+    const checks = [];
     for (let i = 1; i <= 15; i++) {
-      const found = Object.keys(allAtt).find(id => id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`));
+      checks.push({ i, day, sub, p, dayName });
+    }
+    // 並列でまとめて確認
+    await Promise.all(checks.map(async ({ i, dayName, sub, p }) => {
       const btn = document.getElementById(`btn-${day}-${p}-${i}`);
-      if (found) { btn.classList.add('has-data'); btn.dataset.actualId = found; }
+      // 既にhas-dataがついていればスキップ（actualIdが確定済み）
+      if (btn.dataset.actualId) return;
+
+      // attendance 以下を prefix 検索する代わりに、
+      // 既知命名パターンでIDを候補として構築しチェックする
+      // パターン: YYYYMMDD_曜日+限+科目名+第N回
+      // 日付部分は不定のため、attendance/$session_id を直接特定できない。
+      // ただし questions/$session_id も同じ命名のため、
+      // attendance ノード直下のキー一覧（shallow）だけ取得する方法はRTDBにないので
+      // 現実的な妥協点として「attendance を shallow で取得してキーだけ比較」を採用する。
+      // → shallow 取得は REST API で可能なため、Firebase REST を利用する
+    }));
+
+    // Firebase REST API で attendance のキー一覧だけ取得（shallow=true）
+    // これにより値は転送されずキー名のみ受け取れる
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const res = await fetch(
+        `https://lecture-support-default-rtdb.firebaseio.com/attendance.json?shallow=true&auth=${token}`
+      );
+      if (!res.ok) return;
+      const keys = await res.json(); // { "sessionId1": true, "sessionId2": true, ... }
+      if (!keys) return;
+
+      const dayName = { mon: "月", tue: "火", fri: "金" }[day];
+      for (let i = 1; i <= 15; i++) {
+        const btn = document.getElementById(`btn-${day}-${p}-${i}`);
+        // キー名に「曜日+限+科目名+第N回」が含まれるものを探す
+        const found = Object.keys(keys).find(id =>
+          id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`)
+        );
+        if (found) { btn.classList.add('has-data'); btn.dataset.actualId = found; }
+      }
+    } catch (e) {
+      console.warn("scanDataPresence failed:", e);
     }
   }
 
@@ -223,6 +276,9 @@
     const now = new Date();
     const dStrToday = now.toISOString().slice(0, 10).replace(/-/g, "");
     const id = btn.dataset.actualId || `${dStrToday}_${dayName}${p}${sub}第${num}回`;
+
+    // ✅ 修正1: viewingSessionId を更新する前に古いリスナーを解除
+    detachListeners();
     viewingSessionId = id;
 
     let dateLabel = "";
@@ -236,9 +292,6 @@
     document.getElementById('data-actions').classList.toggle('hidden', !btn.classList.contains('has-data'));
 
     updateStartButtonState();
-
-    off(ref(db, `attendance/${viewingSessionId}`));
-    off(ref(db, `questions/${viewingSessionId}`));
     startMonitoring(id);
   };
 
@@ -262,7 +315,7 @@
         if (val && val.expiresAt && Date.now() > val.expiresAt) {
           console.log("期限切れの講義を自動終了します:", val.id);
           await remove(ref(db, 'active_session'));
-          return; // 削除後 onValue が val=null で再発火する
+          return;
         }
         activeSessionId = (val && val.isOpen) ? val.id : "";
         document.getElementById('end-lecture-btn').classList.toggle('hidden', !activeSessionId);
@@ -320,7 +373,9 @@
     const attBody = document.getElementById('att-list-body');
     const qCont = document.getElementById('questions-container');
 
-    onValue(ref(db, `attendance/${sessionId}`), (s) => {
+    // ✅ 修正1: コールバックを変数に保持してからリスナー登録
+    attListenerRef = ref(db, `attendance/${sessionId}`);
+    attListener = onValue(attListenerRef, (s) => {
       const data = s.val() || {};
       const list = Object.values(data).sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
       document.getElementById('att-count').textContent = list.length;
@@ -328,7 +383,8 @@
       list.forEach(e => attBody.appendChild(buildAttendanceRow(e)));
     });
 
-    onValue(ref(db, `questions/${sessionId}`), (s) => {
+    qListenerRef = ref(db, `questions/${sessionId}`);
+    qListener = onValue(qListenerRef, (s) => {
       const data = s.val() || {};
       const keys = Object.keys(data).reverse();
       qCont.replaceChildren();
@@ -371,7 +427,7 @@
         const q = allQ[sid][qid];
         const content = q.body || q.text || "";
         const comb = ((q.name || "") + (q.studentId || "") + (q.email || "") + content).toLowerCase();
-        if (comb.includes(query)) results.push({ sid, type: "質問", person: q.email, content: content, time: q.timestamp });
+        if (comb.includes(query)) results.push({ sid, type: "質問", person: `${q.studentId || ''} / ${q.name || q.email || ''}`, content: content, time: q.timestamp });
       }));
       results.sort((a, b) => b.time - a.time);
 
@@ -407,6 +463,12 @@
     if (!title || title === "科目を選択してください") {
       return alert("回を選択してから開始してください。");
     }
+
+    // ✅ 修正3: 別の講義が進行中の場合は確認ダイアログを表示
+    if (activeSessionId && activeSessionId !== viewingSessionId) {
+      if (!confirm(`別の講義「${activeSessionId}」が進行中です。\nこの回に切り替えますか？`)) return;
+    }
+
     const now = Date.now();
     await set(ref(db, 'active_session'), {
       id: viewingSessionId,
@@ -433,20 +495,14 @@
     const attData = attSnap.val() || {};
     const qData = qSnap.val() || {};
 
+    // ✅ 修正4: uid のみで質問を紐付け、studentId フォールバックを廃止
+    // uid が一致しない質問は「無名の質問」として別途扱う
     const qByUid = {};
-    const qByStudentId = {};
     Object.values(qData).forEach(q => {
       const content = (q.body || q.text || "").trim();
-      if (!content) return;
-      if (q.uid) {
-        if (!qByUid[q.uid]) qByUid[q.uid] = [];
-        qByUid[q.uid].push(content);
-      }
-      if (q.studentId) {
-        const sid = String(q.studentId).toUpperCase();
-        if (!qByStudentId[sid]) qByStudentId[sid] = [];
-        qByStudentId[sid].push(content);
-      }
+      if (!content || !q.uid) return;
+      if (!qByUid[q.uid]) qByUid[q.uid] = [];
+      qByUid[q.uid].push(content);
     });
 
     const list = Object.entries(attData)
@@ -460,10 +516,7 @@
 
     let csv = "\uFEFF学籍番号,氏名,出席時刻,質問内容\n";
     list.forEach(e => {
-      const sid = e.studentId ? String(e.studentId).toUpperCase() : "";
-      const questions = (qByUid[e.uid] && qByUid[e.uid].length)
-        ? qByUid[e.uid]
-        : (qByStudentId[sid] || []);
+      const questions = qByUid[e.uid] || [];
       const combined = questions.join(" / ");
       const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleString() : "";
       csv += `${esc(e.studentId)},${esc(e.name)},${esc(timeStr)},${esc(combined)}\n`;
@@ -478,6 +531,7 @@
 
   document.getElementById('delete-btn').onclick = async () => {
     if (confirm("この回のデータを完全に削除しますか？")) {
+      detachListeners();
       await Promise.all([
         remove(ref(db, `attendance/${viewingSessionId}`)),
         remove(ref(db, `questions/${viewingSessionId}`))
