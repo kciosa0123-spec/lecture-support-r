@@ -362,7 +362,7 @@
     const toggleBtn = document.createElement('button');
     toggleBtn.className = `q-toggle ${isRead ? 'read' : 'unread'}`;
     toggleBtn.textContent = isRead ? '済' : '未';
-    toggleBtn.onclick = () => window.toggleQ(key, !isRead);
+    toggleBtn.onclick = () => update(ref(db, `questions/${viewingSessionId}/${key}`), { read: !isRead });
     header.appendChild(toggleBtn);
 
     const body = document.createElement('div');
