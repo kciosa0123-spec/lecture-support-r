@@ -305,6 +305,11 @@
   };
 
   onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    document.getElementById('dashboard-section').classList.add('hidden');
+    document.getElementById('login-section').classList.remove('hidden');
+    return;
+  }
     if (user && user.email === TEACHER_EMAIL) {
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('dashboard-section').classList.remove('hidden');
