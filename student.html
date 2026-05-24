@@ -34,6 +34,11 @@
 </div>
 
 <div id="main-section" class="hidden">
+  
+  <div id="offline-warning" class="hidden" style="background: #ea4335; color: white; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 20px; text-align: center; font-size: 0.9rem; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
+    ⚠️ ネットワーク接続が切れています。<br>通信環境を確認してください。
+  </div>
+
   <div id="session-info">教員による講義開始を待っています...</div>
 
   <div class="box profile-box" id="profile-ui">
@@ -94,15 +99,33 @@
   let wasInLecture = false;
   let endedMessageTimer = null;
   let expiryWatcherStarted = false;
-
-  // ✅ 修正: 質問リスナーの解除関数をまとめて管理する配列
   let questionUnsubscribers = [];
+  
+  // ✨ 先生のアイデア：オフライン検知用の遅延タイマー変数
+  let offlineTimer = null; 
 
-  // セッション終了時に全質問リスナーを解除する
   function detachQuestionListeners() {
     questionUnsubscribers.forEach(unsub => unsub());
     questionUnsubscribers = [];
   }
+
+  // ✨ 先生のアイデア：オフライン検知とチラつき防止ロジック
+  onValue(ref(db, '.info/connected'), (snap) => {
+    const offlineBanner = document.getElementById('offline-warning');
+    if (snap.val() === true) {
+      // 接続回復時はタイマーをキャンセルして即バナーを隠す
+      if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+      offlineBanner.classList.add('hidden');
+    } else {
+      // ログイン済みの状態でのみ警告を出す
+      if (currentUser) {
+        // 3秒後もまだ切断中なら警告を出す（一瞬のチラつき防止）
+        offlineTimer = setTimeout(() => {
+          offlineBanner.classList.remove('hidden');
+        }, 3000);
+      }
+    }
+  });
 
   onAuthStateChanged(auth, (user) => {
     if (user && user.email) {
@@ -157,9 +180,7 @@
         areaEl.classList.add('hidden');
         setLock(false);
         document.getElementById('question-section').classList.add('hidden');
-        // ✅ 修正: 講義終了時に全質問リスナーを解除
         detachQuestionListeners();
-        // ✅ 修正: 講義終了時に送信履歴表示をリセット
         document.getElementById('my-questions-container').classList.add('hidden');
         document.getElementById('my-questions-list').replaceChildren();
         if (wasInLecture) {
@@ -184,7 +205,6 @@
         document.getElementById('interactive-area').classList.add('hidden');
         setLock(false);
         document.getElementById('question-section').classList.add('hidden');
-        // ✅ 修正: 期限切れ時にも全質問リスナーを解除
         detachQuestionListeners();
         document.getElementById('my-questions-container').classList.add('hidden');
         document.getElementById('my-questions-list').replaceChildren();
@@ -293,7 +313,6 @@
       status.style.color = "#34a853";
       setTimeout(() => { status.textContent = ""; }, 3000);
 
-      // 送信履歴カードを表示
       document.getElementById('my-questions-container').classList.remove('hidden');
       const qList = document.getElementById('my-questions-list');
 
@@ -311,7 +330,6 @@
 
       qList.prepend(qCard);
 
-      // ✅ 修正: onValue の戻り値（解除関数）を配列で管理
       const unsubscribe = onValue(newQuestionRef, (snap) => {
         const data = snap.val();
         if (data && data.read === true) {
@@ -319,12 +337,10 @@
           qStatus.style.color = "#34a853";
           qCard.style.background = "#e6f4ea";
           qCard.style.borderColor = "#c6e1d0";
-          // ✅ 修正: 確認済みになったら即座にリスナーを解除
           unsubscribe();
           questionUnsubscribers = questionUnsubscribers.filter(f => f !== unsubscribe);
         }
       });
-      // ✅ 修正: 解除関数を管理配列に追加
       questionUnsubscribers.push(unsubscribe);
 
     } catch (e) {
