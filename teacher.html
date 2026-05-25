@@ -549,7 +549,7 @@
     list.forEach(e => {
       const questions = qByUid[e.uid] || [];
       const combined = questions.join(" / ");
-      const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleString() : "";
+      const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : "";
       csv += `${esc(e.studentId)},${esc(e.name)},${esc(timeStr)},${esc(combined)}\n`;
     });
 
