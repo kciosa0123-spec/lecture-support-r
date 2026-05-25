@@ -117,16 +117,17 @@
       if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
       offlineBanner.classList.add('hidden');
     } else {
-      // ログイン済みの状態でのみ警告を出す
       if (currentUser) {
-        // 3秒後もまだ切断中なら警告を出す（一瞬のチラつき防止）
-        offlineTimer = setTimeout(() => {
-          offlineBanner.classList.remove('hidden');
-        }, 3000);
+        // 👇 この if (!offlineTimer) { を追加
+        if (!offlineTimer) {
+          offlineTimer = setTimeout(() => {
+            offlineBanner.classList.remove('hidden');
+          }, 3000);
+        } // 👈 この閉じカッコ } も忘れずに！
       }
     }
   });
-
+  
   onAuthStateChanged(auth, (user) => {
     if (user && user.email) {
       if (!user.email.endsWith("@mail.ryukoku.ac.jp")) {
