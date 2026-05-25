@@ -10,28 +10,37 @@
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 10px; background: #f4f7f6; line-height: 1.5; }
     .box { background: #fff; padding: 12px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-    .timetable-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 10px; }
+    
+    /* 縦長画面（iPad3分割）向けにグリッドを最適化 */
+    .timetable-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 10px; transition: max-height 0.3s ease-out; overflow: hidden; }
     .day-column { background: #ebedef; padding: 10px; border-radius: 8px; }
     .day-title { font-weight: bold; text-align: center; margin-bottom: 8px; color: #444; border-bottom: 2px solid #ccc; padding-bottom: 3px; font-size: 13px; }
     .period-slot { margin-bottom: 8px; min-height: 40px; }
     .period-label { font-size: 10px; color: #888; margin-bottom: 2px; }
     .empty-slot { border: 1px dashed #ccc; border-radius: 6px; height: 35px; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 11px; }
+    
     .subject-btn { width: 100%; background: #fff; color: #333; border: 1px solid #bbb; padding: 6px; border-radius: 6px; text-align: left; font-size: 12px; cursor: pointer; transition: 0.2s; font-weight: bold; }
     .subject-btn:hover { background: #f0f0f0; border-color: #4285f4; }
     .subject-btn.active { background: #4285f4; color: #fff; border-color: #4285f4; }
+    
     .session-grid-mini { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-top: 5px; padding: 5px; background: rgba(255,255,255,0.7); border-radius: 6px; border: 1px solid #dee2e6; display: none; }
     .session-btn { background: #eee; border: 1px solid #ccc; font-size: 10px; padding: 4px 0; border-radius: 4px; cursor: pointer; color: #666; font-weight: bold; text-align: center; }
     .session-btn.has-data { background: #34a853; color: #fff; border-color: #2d8a47; }
     .session-btn.selected { outline: 3px solid #ffc107; z-index: 1; }
+    
+    /* 折りたたみ制御用のスタイル */
     #timetable-toggle-btn { width: 100%; padding: 8px; background: #6c757d; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; margin-bottom: 15px; font-size: 12px; transition: 0.2s; }
     #timetable-toggle-btn:hover { background: #5a6268; }
+    
     .search-area { background: #e3f2fd; border: 1px solid #90caf9; padding: 10px; }
     #search-results-table { width: 100%; border-collapse: collapse; font-size: 11px; background: white; margin-top: 8px; }
     #search-results-table th { background: #1976d2; color: white; padding: 6px; }
     #search-results-table td { padding: 6px; border-bottom: 1px solid #eee; }
+    
     .question-card { background: white; border: 1px solid #ddd; border-left: 5px solid #4285f4; padding: 10px; margin-bottom: 8px; border-radius: 6px; position: relative; }
     .question-card.answered { border-left-color: #ccc; opacity: 0.5; background: #f9f9f9; }
     #questions-container.hide-answered .answered { display: none; }
+    
     button { color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 13px; }
     .btn-blue { background: #4285f4; }
     .btn-warning { background: #ffc107; color: #333; }
@@ -40,6 +49,7 @@
     .btn-secondary { background: #6c757d; }
     .btn-outline { background: #fff; color: #666; border: 1px solid #ccc; padding: 4px 8px; font-weight: normal; font-size: 11px; }
     .btn-outline.active { background: #666; color: #fff; border-color: #666; }
+    
     .hidden { display: none; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th, td { text-align: left; padding: 6px; border-bottom: 1px solid #eee; }
@@ -53,6 +63,10 @@
 <body>
 
   <h2 style="font-size: 1.2rem; margin: 5px 0 10px 0; color: #333;">講義支援ダッシュボード（龍谷大）</h2>
+
+  <div id="offline-warning" class="hidden" style="background: #ea4335; color: white; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 15px; text-align: center; font-size: 13px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
+    ⚠️ ネットワーク接続が切れています。リアルタイム更新が停止しています。通信環境を確認してください。
+  </div>
 
   <div id="login-section" class="box" style="text-align: center; padding: 30px;">
     <button id="login-btn" type="button" class="btn-blue" style="font-size: 16px;">Googleでログイン</button>
@@ -161,6 +175,7 @@
 
   let viewingSessionId = "";
   let activeSessionId = "";
+  let offlineTimer = null; 
 
   let attListener = null;
   let attListenerRef = null;
@@ -172,7 +187,7 @@
     if (qListenerRef   && qListener)   { off(qListenerRef,   qListener);   qListener   = null; qListenerRef   = null; }
   }
 
-  // 時間割エリアの開閉トグル
+  // 時間割エリアの開閉トグルロジック
   const toggleBtn = document.getElementById('timetable-toggle-btn');
   const wrapper = document.getElementById('timetable-wrapper');
   toggleBtn.onclick = () => {
@@ -186,6 +201,23 @@
       toggleBtn.style.background = '#4285f4';
     }
   };
+
+  // 通信状態を監視（チラつき防止3秒タイマー付き）
+  onValue(ref(db, '.info/connected'), (snap) => {
+    const offlineBanner = document.getElementById('offline-warning');
+    if (snap.val() === true) {
+      if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+      offlineBanner.classList.add('hidden');
+    } else {
+      if (auth.currentUser) {
+        if (!offlineTimer) {
+          offlineTimer = setTimeout(() => {
+            offlineBanner.classList.remove('hidden');
+          }, 3000);
+        }
+      }
+    }
+  });
 
   // 時間割グリッドを構築
   Object.keys(timetable).forEach(day => {
@@ -237,8 +269,7 @@
       const dayName = { mon: "月", tue: "火", fri: "金" }[day];
       for (let i = 1; i <= 15; i++) {
         const btn = document.getElementById(`btn-${day}-${p}-${i}`);
-        // ✅ 修正: return → continue（関数全体を終了させず次のボタンへ進む）
-        if (btn.dataset.actualId) continue;
+        if (btn.dataset.actualId) continue; // 先生による修正箇所（正しく反映済み）
         const found = Object.keys(keys).find(id =>
           id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`)
         );
@@ -290,7 +321,7 @@
     updateStartButtonState();
     startMonitoring(id);
 
-    // 回を選択したら時間割を自動的に閉じる
+    // 回を選択したら自動的に時間割を閉じる
     wrapper.style.display = 'none';
     toggleBtn.textContent = '📂 時間割選択エリアを表示する';
     toggleBtn.style.background = '#4285f4';
@@ -306,7 +337,6 @@
   };
 
   onAuthStateChanged(auth, (user) => {
-    // ✅ 修正: 未認証時（学生側ログアウトの巻き添えなど）はログイン画面に戻す
     if (!user) {
       document.getElementById('dashboard-section').classList.add('hidden');
       document.getElementById('login-section').classList.remove('hidden');
@@ -451,7 +481,7 @@
     } catch (e) {
       console.error(e);
       alert("検索に失敗しました。");
-    } finally {
+    } finally { // 先生によるタイポ修正箇所（正しく反映済み）
       btn.textContent = "検索"; btn.disabled = false;
     }
   };
@@ -467,9 +497,11 @@
     if (!title || title === "科目を選択してください") {
       return alert("回を選択してから開始してください。");
     }
+
     if (activeSessionId && activeSessionId !== viewingSessionId) {
       if (!confirm(`別の講義「${activeSessionId}」が進行中です。\nこの回に切り替えますか？`)) return;
     }
+
     const now = Date.now();
     await set(ref(db, 'active_session'), {
       id: viewingSessionId,
