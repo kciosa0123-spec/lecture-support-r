@@ -34,7 +34,7 @@
 </div>
 
 <div id="main-section" class="hidden">
-  
+
   <div id="offline-warning" class="hidden" style="background: #ea4335; color: white; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 20px; text-align: center; font-size: 0.9rem; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
     ⚠️ ネットワーク接続が切れています。<br>通信環境を確認してください。
   </div>
@@ -76,7 +76,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-  import { getDatabase, ref, set, push, onValue, get } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+  import { getDatabase, ref, set, push, onValue, off, get } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
@@ -100,34 +100,72 @@
   let endedMessageTimer = null;
   let expiryWatcherStarted = false;
   let questionUnsubscribers = [];
-  
-  // ✨ 先生のアイデア：オフライン検知用の遅延タイマー変数
-  let offlineTimer = null; 
 
+  // ✅ 修正1: offlineTimer をモジュールスコープで管理
+  let offlineTimer = null;
+
+  // ✅ 修正2: .info/connected リスナーの解除関数を保持
+  let connectedListenerRef = null;
+  let connectedListener = null;
+
+  // 質問リスナーを一括解除
   function detachQuestionListeners() {
     questionUnsubscribers.forEach(unsub => unsub());
     questionUnsubscribers = [];
   }
 
-  // ✨ 先生のアイデア：オフライン検知とチラつき防止ロジック
-  onValue(ref(db, '.info/connected'), (snap) => {
-    const offlineBanner = document.getElementById('offline-warning');
-    if (snap.val() === true) {
-      // 接続回復時はタイマーをキャンセルして即バナーを隠す
-      if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
-      offlineBanner.classList.add('hidden');
-    } else {
-      if (currentUser) {
-        // 👇 この if (!offlineTimer) { を追加
-        if (!offlineTimer) {
+  // ✅ 修正2: .info/connected リスナーを登録する関数（再登録防止）
+  function startConnectionMonitor() {
+    if (connectedListener) return; // 既に登録済みなら何もしない
+    connectedListenerRef = ref(db, '.info/connected');
+    connectedListener = onValue(connectedListenerRef, (snap) => {
+      const offlineBanner = document.getElementById('offline-warning');
+      if (snap.val() === true) {
+        // 接続回復時はタイマーをキャンセルして即バナーを隠す
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+        offlineBanner.classList.add('hidden');
+      } else {
+        // ✅ 修正1 & 修正2: ログイン済み かつ タイマー未登録 の場合のみ警告
+        if (currentUser && !offlineTimer) {
           offlineTimer = setTimeout(() => {
             offlineBanner.classList.remove('hidden');
           }, 3000);
-        } // 👈 この閉じカッコ } も忘れずに！
+        }
+      }
+    });
+  }
+
+  // ✅ 修正2: .info/connected リスナーを解除する関数
+  function stopConnectionMonitor() {
+    if (connectedListenerRef && connectedListener) {
+      off(connectedListenerRef, connectedListener);
+      connectedListener = null;
+      connectedListenerRef = null;
+    }
+    if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+    document.getElementById('offline-warning').classList.add('hidden');
+  }
+
+  // ✅ 修正4: visibilitychange で期限切れを即時チェック
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !currentSessionId) return;
+    const snap = await get(ref(db, 'active_session'));
+    const val = snap.val();
+    if (val && val.expiresAt && Date.now() > val.expiresAt) {
+      currentSessionId = null;
+      document.getElementById('interactive-area').classList.add('hidden');
+      setLock(false);
+      document.getElementById('question-section').classList.add('hidden');
+      detachQuestionListeners();
+      document.getElementById('my-questions-container').classList.add('hidden');
+      document.getElementById('my-questions-list').replaceChildren();
+      if (wasInLecture) {
+        showLectureEndedMessage();
+        wasInLecture = false;
       }
     }
   });
-  
+
   onAuthStateChanged(auth, (user) => {
     if (user && user.email) {
       if (!user.email.endsWith("@mail.ryukoku.ac.jp")) {
@@ -143,9 +181,15 @@
 
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('main-section').classList.remove('hidden');
+
+      // ✅ 修正2: ログイン後に接続監視を開始
+      startConnectionMonitor();
       monitorSession();
       startExpiryWatcher();
     } else {
+      currentUser = null;
+      // ✅ 修正1 & 2: ログアウト時に接続監視を停止・タイマーをクリア
+      stopConnectionMonitor();
       document.getElementById('login-section').classList.remove('hidden');
       document.getElementById('main-section').classList.add('hidden');
     }
@@ -292,11 +336,16 @@
     const bodyText = document.getElementById('question-text').value.trim();
     if (!bodyText || !currentSessionId) return;
 
+    // ✅ 修正5: 送信直前にセッションIDをローカル変数に固定
+    // set() の非同期処理中に currentSessionId が変わっても
+    // 正しいセッションに書き込まれることを保証する
+    const sessionIdAtSend = currentSessionId;
+
     const sid = document.getElementById('student-id').value.trim().toUpperCase();
     const sname = document.getElementById('student-name').value.trim();
 
     try {
-      const newQuestionRef = push(ref(db, `questions/${currentSessionId}`));
+      const newQuestionRef = push(ref(db, `questions/${sessionIdAtSend}`));
 
       await set(newQuestionRef, {
         uid: currentUser.uid,
@@ -346,12 +395,21 @@
 
     } catch (e) {
       console.error(e);
-      alert("送信に失敗しました。ページを再読み込みするか、ログイン状態を確認してください。");
+      // ✅ 修正5: 講義終了による書き込み失敗と通信エラーを区別して表示
+      if (!currentSessionId) {
+        alert("講義が終了したため、メッセージを送信できませんでした。");
+      } else {
+        alert("送信に失敗しました。ページを再読み込みするか、ログイン状態を確認してください。");
+      }
     }
   };
 
+  // ✅ 修正1: ログアウト前にタイマーと接続監視を確実にクリア
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
-  document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => location.reload());
+  document.getElementById('logout-btn').onclick = () => {
+    stopConnectionMonitor();
+    signOut(auth).then(() => location.reload());
+  };
 </script>
 </body>
 </html>
