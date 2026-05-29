@@ -22,6 +22,13 @@
     #session-info { background: #fee; color: #c00; padding: 12px; border-radius: 6px; font-weight: bold; margin-bottom: 20px; text-align: center; font-size: 0.9rem; border: 1px solid #fcc; }
     .hidden { display: none; }
     .profile-box { background: #fffbe6; border: 1px solid #ffe58f; }
+
+    /* 追加: リアクションボタン用CSS */
+    .rxn-row { display: flex; gap: 8px; margin-bottom: 15px; }
+    .rxn-btn { flex: 1; padding: 10px 5px; font-size: 13px; border: 2px solid #ddd; border-radius: 8px; background: #fff; color: #555; font-weight: bold; cursor: pointer; transition: 0.2s; text-align: center; }
+    .rxn-btn.active-good { border-color: #34a853; background: #e6f4ea; color: #137333; }
+    .rxn-btn.active-hard { border-color: #ea4335; background: #fce8e6; color: #c5221f; }
+    .rxn-btn.active-wait { border-color: #fbbc04; background: #fef7e0; color: #b06000; }
   </style>
 </head>
 <body>
@@ -34,7 +41,6 @@
 </div>
 
 <div id="main-section" class="hidden">
-
   <div id="offline-warning" class="hidden" style="background: #ea4335; color: white; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 20px; text-align: center; font-size: 0.9rem; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
     ⚠️ ネットワーク接続が切れています。<br>通信環境を確認してください。
   </div>
@@ -56,6 +62,14 @@
     </div>
 
     <div class="box hidden" id="question-section">
+      <label style="color:#1a73e8;">いまのペース・理解度は？（匿名で先生に伝わります）</label>
+      <div class="rxn-row">
+        <button id="rxn-good" class="rxn-btn">👍 順調</button>
+        <button id="rxn-hard" class="rxn-btn">😓 難しい</button>
+        <button id="rxn-wait" class="rxn-btn">✋ 待って</button>
+      </div>
+      <hr style="border:0; border-top:1px dashed #ccc; margin:15px 0;">
+
       <label>質問・メッセージ</label>
       <textarea id="question-text" rows="3" placeholder="メッセージを入力"></textarea>
       <button id="send-btn">送信 (Send)</button>
@@ -76,7 +90,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-  import { getDatabase, ref, set, push, onValue, off, get } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+  import { getDatabase, ref, set, push, onValue, off, get, remove } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
@@ -100,32 +114,29 @@
   let endedMessageTimer = null;
   let expiryWatcherStarted = false;
   let questionUnsubscribers = [];
-
-  // ✅ 修正1: offlineTimer をモジュールスコープで管理
+  
   let offlineTimer = null;
-
-  // ✅ 修正2: .info/connected リスナーの解除関数を保持
   let connectedListenerRef = null;
   let connectedListener = null;
 
-  // 質問リスナーを一括解除
+  // 追加: リアクションリスナー管理
+  let rxnUnsubscriber = null;
+
   function detachQuestionListeners() {
     questionUnsubscribers.forEach(unsub => unsub());
     questionUnsubscribers = [];
+    if (rxnUnsubscriber) { rxnUnsubscriber(); rxnUnsubscriber = null; }
   }
 
-  // ✅ 修正2: .info/connected リスナーを登録する関数（再登録防止）
   function startConnectionMonitor() {
-    if (connectedListener) return; // 既に登録済みなら何もしない
+    if (connectedListener) return;
     connectedListenerRef = ref(db, '.info/connected');
     connectedListener = onValue(connectedListenerRef, (snap) => {
       const offlineBanner = document.getElementById('offline-warning');
       if (snap.val() === true) {
-        // 接続回復時はタイマーをキャンセルして即バナーを隠す
         if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
         offlineBanner.classList.add('hidden');
       } else {
-        // ✅ 修正1 & 修正2: ログイン済み かつ タイマー未登録 の場合のみ警告
         if (currentUser && !offlineTimer) {
           offlineTimer = setTimeout(() => {
             offlineBanner.classList.remove('hidden');
@@ -135,7 +146,6 @@
     });
   }
 
-  // ✅ 修正2: .info/connected リスナーを解除する関数
   function stopConnectionMonitor() {
     if (connectedListenerRef && connectedListener) {
       off(connectedListenerRef, connectedListener);
@@ -146,25 +156,32 @@
     document.getElementById('offline-warning').classList.add('hidden');
   }
 
-  // ✅ 修正4: visibilitychange で期限切れを即時チェック
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible' || !currentSessionId) return;
     const snap = await get(ref(db, 'active_session'));
     const val = snap.val();
     if (val && val.expiresAt && Date.now() > val.expiresAt) {
-      currentSessionId = null;
-      document.getElementById('interactive-area').classList.add('hidden');
-      setLock(false);
-      document.getElementById('question-section').classList.add('hidden');
-      detachQuestionListeners();
-      document.getElementById('my-questions-container').classList.add('hidden');
-      document.getElementById('my-questions-list').replaceChildren();
-      if (wasInLecture) {
-        showLectureEndedMessage();
-        wasInLecture = false;
-      }
+      handleSessionEnd();
     }
   });
+
+  function handleSessionEnd() {
+    currentSessionId = null;
+    document.getElementById('interactive-area').classList.add('hidden');
+    setLock(false);
+    document.getElementById('question-section').classList.add('hidden');
+    detachQuestionListeners();
+    document.getElementById('my-questions-container').classList.add('hidden');
+    document.getElementById('my-questions-list').replaceChildren();
+    
+    // リアクションUIのリセット
+    document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
+    
+    if (wasInLecture) {
+      showLectureEndedMessage();
+      wasInLecture = false;
+    }
+  }
 
   onAuthStateChanged(auth, (user) => {
     if (user && user.email) {
@@ -174,7 +191,6 @@
         return;
       }
       currentUser = user;
-
       const emailId = user.email.split('@')[0].toUpperCase();
       document.getElementById('student-id').value = localStorage.getItem('ryu_student_id') || emailId;
       document.getElementById('student-name').value = localStorage.getItem('ryu_student_name') || "";
@@ -182,13 +198,11 @@
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('main-section').classList.remove('hidden');
 
-      // ✅ 修正2: ログイン後に接続監視を開始
       startConnectionMonitor();
       monitorSession();
       startExpiryWatcher();
     } else {
       currentUser = null;
-      // ✅ 修正1 & 2: ログアウト時に接続監視を停止・タイマーをクリア
       stopConnectionMonitor();
       document.getElementById('login-section').classList.remove('hidden');
       document.getElementById('main-section').classList.add('hidden');
@@ -210,7 +224,6 @@
     onValue(ref(db, 'active_session'), (snap) => {
       const val = snap.val();
       const areaEl = document.getElementById('interactive-area');
-
       const isExpired = !!(val && val.expiresAt && Date.now() > val.expiresAt);
       const isActive = !!(val && val.isOpen && !isExpired);
 
@@ -221,19 +234,8 @@
         wasInLecture = true;
         checkAttendanceStatus();
       } else {
-        currentSessionId = null;
-        areaEl.classList.add('hidden');
-        setLock(false);
-        document.getElementById('question-section').classList.add('hidden');
-        detachQuestionListeners();
-        document.getElementById('my-questions-container').classList.add('hidden');
-        document.getElementById('my-questions-list').replaceChildren();
-        if (wasInLecture) {
-          showLectureEndedMessage();
-          wasInLecture = false;
-        } else {
-          showWaitingMessage();
-        }
+        handleSessionEnd();
+        if (!wasInLecture) showWaitingMessage();
       }
     });
   }
@@ -246,17 +248,7 @@
       const snap = await get(ref(db, 'active_session'));
       const val = snap.val();
       if (val && val.expiresAt && Date.now() > val.expiresAt) {
-        currentSessionId = null;
-        document.getElementById('interactive-area').classList.add('hidden');
-        setLock(false);
-        document.getElementById('question-section').classList.add('hidden');
-        detachQuestionListeners();
-        document.getElementById('my-questions-container').classList.add('hidden');
-        document.getElementById('my-questions-list').replaceChildren();
-        if (wasInLecture) {
-          showLectureEndedMessage();
-          wasInLecture = false;
-        }
+        handleSessionEnd();
       }
     }, 30 * 1000);
   }
@@ -272,6 +264,7 @@
       btn.disabled = true;
       setLock(true);
       qSection.classList.remove('hidden');
+      startReactionMonitor(); // 追加: 出席済みならリアクション監視開始
     } else {
       btn.textContent = "出席 (Attendance) を報告";
       btn.disabled = false;
@@ -298,7 +291,6 @@
       btn.disabled = false;
       return alert("学籍番号と氏名を入力してください。");
     }
-
     sname = sname.replace(/[\s ]+/g, ' ');
     if (!sname.includes(' ')) {
       if (!confirm("苗字と名前の間にスペースがありません。よろしいですか？（例：龍谷 太郎）")) {
@@ -332,21 +324,50 @@
     }
   };
 
+  // ＝＝＝ 追加: リアクション関連のロジック ＝＝＝
+  function startReactionMonitor() {
+    if (!currentSessionId || !currentUser) return;
+    if (rxnUnsubscriber) rxnUnsubscriber();
+    const rxnRef = ref(db, `reactions/${currentSessionId}/${currentUser.uid}`);
+    rxnUnsubscriber = onValue(rxnRef, (snap) => {
+      // 一旦すべての色をクリア
+      document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
+      if (snap.exists()) {
+        const st = snap.val().status;
+        const btn = document.getElementById(`rxn-${st}`);
+        if (btn) btn.classList.add(`active-${st}`);
+      }
+    });
+  }
+
+  function handleRxn(status) {
+    if (!currentSessionId || !currentUser) return;
+    const btn = document.getElementById(`rxn-${status}`);
+    const rxnRef = ref(db, `reactions/${currentSessionId}/${currentUser.uid}`);
+    
+    // すでに選択中のボタンを押した場合は「取り消し（DBから削除）」
+    if (btn.classList.contains(`active-${status}`)) {
+      remove(rxnRef);
+    } else {
+      set(rxnRef, { status: status, timestamp: Date.now() });
+    }
+  }
+
+  document.getElementById('rxn-good').onclick = () => handleRxn('good');
+  document.getElementById('rxn-hard').onclick = () => handleRxn('hard');
+  document.getElementById('rxn-wait').onclick = () => handleRxn('wait');
+  // ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+
   document.getElementById('send-btn').onclick = async () => {
     const bodyText = document.getElementById('question-text').value.trim();
     if (!bodyText || !currentSessionId) return;
 
-    // ✅ 修正5: 送信直前にセッションIDをローカル変数に固定
-    // set() の非同期処理中に currentSessionId が変わっても
-    // 正しいセッションに書き込まれることを保証する
     const sessionIdAtSend = currentSessionId;
-
     const sid = document.getElementById('student-id').value.trim().toUpperCase();
     const sname = document.getElementById('student-name').value.trim();
 
     try {
       const newQuestionRef = push(ref(db, `questions/${sessionIdAtSend}`));
-
       await set(newQuestionRef, {
         uid: currentUser.uid,
         email: currentUser.email,
@@ -365,19 +386,15 @@
 
       document.getElementById('my-questions-container').classList.remove('hidden');
       const qList = document.getElementById('my-questions-list');
-
       const qCard = document.createElement('div');
       qCard.style.cssText = 'background:#f8f9fa; border:1px solid #ddd; padding:10px; border-radius:8px; font-size:14px; text-align:left;';
-
       const qBody = document.createElement('div');
       qBody.textContent = bodyText;
       qCard.appendChild(qBody);
-
       const qStatus = document.createElement('div');
       qStatus.style.cssText = 'font-size:11px; margin-top:6px; font-weight:bold; color:#888;';
       qStatus.textContent = "⏳ 教員の確認待ち...";
       qCard.appendChild(qStatus);
-
       qList.prepend(qCard);
 
       const unsubscribe = onValue(newQuestionRef, (snap) => {
@@ -395,7 +412,6 @@
 
     } catch (e) {
       console.error(e);
-      // ✅ 修正5: 講義終了による書き込み失敗と通信エラーを区別して表示
       if (!currentSessionId) {
         alert("講義が終了したため、メッセージを送信できませんでした。");
       } else {
@@ -404,7 +420,6 @@
     }
   };
 
-  // ✅ 修正1: ログアウト前にタイマーと接続監視を確実にクリア
   document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
   document.getElementById('logout-btn').onclick = () => {
     stopConnectionMonitor();
