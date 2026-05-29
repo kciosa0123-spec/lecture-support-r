@@ -23,7 +23,7 @@
     .hidden { display: none; }
     .profile-box { background: #fffbe6; border: 1px solid #ffe58f; }
 
-    /* 追加: リアクションボタン用CSS */
+    /* リアクションボタン用CSS */
     .rxn-row { display: flex; gap: 8px; margin-bottom: 15px; }
     .rxn-btn { flex: 1; padding: 10px 5px; font-size: 13px; border: 2px solid #ddd; border-radius: 8px; background: #fff; color: #555; font-weight: bold; cursor: pointer; transition: 0.2s; text-align: center; }
     .rxn-btn.active-good { border-color: #34a853; background: #e6f4ea; color: #137333; }
@@ -114,18 +114,20 @@
   let endedMessageTimer = null;
   let expiryWatcherStarted = false;
   let questionUnsubscribers = [];
-  
+
   let offlineTimer = null;
   let connectedListenerRef = null;
   let connectedListener = null;
 
-  // 追加: リアクションリスナー管理
+  // リアクションリスナー管理
   let rxnUnsubscriber = null;
+  let rxnMonitorSessionId = null; // 現在リアクションを購読中のセッションID（重複購読防止）
 
   function detachQuestionListeners() {
     questionUnsubscribers.forEach(unsub => unsub());
     questionUnsubscribers = [];
     if (rxnUnsubscriber) { rxnUnsubscriber(); rxnUnsubscriber = null; }
+    rxnMonitorSessionId = null;
   }
 
   function startConnectionMonitor() {
@@ -173,10 +175,10 @@
     detachQuestionListeners();
     document.getElementById('my-questions-container').classList.add('hidden');
     document.getElementById('my-questions-list').replaceChildren();
-    
+
     // リアクションUIのリセット
     document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
-    
+
     if (wasInLecture) {
       showLectureEndedMessage();
       wasInLecture = false;
@@ -264,7 +266,7 @@
       btn.disabled = true;
       setLock(true);
       qSection.classList.remove('hidden');
-      startReactionMonitor(); // 追加: 出席済みならリアクション監視開始
+      startReactionMonitor(); // 出席済みならリアクション監視開始（重複購読は内部で防止）
     } else {
       btn.textContent = "出席 (Attendance) を報告";
       btn.disabled = false;
@@ -291,7 +293,7 @@
       btn.disabled = false;
       return alert("学籍番号と氏名を入力してください。");
     }
-    sname = sname.replace(/[\s ]+/g, ' ');
+    sname = sname.replace(/[\s　]+/g, ' ');
     if (!sname.includes(' ')) {
       if (!confirm("苗字と名前の間にスペースがありません。よろしいですか？（例：龍谷 太郎）")) {
         btn.disabled = false;
@@ -324,11 +326,17 @@
     }
   };
 
-  // ＝＝＝ 追加: リアクション関連のロジック ＝＝＝
+  // ＝＝＝ リアクション関連のロジック ＝＝＝
   function startReactionMonitor() {
     if (!currentSessionId || !currentUser) return;
-    if (rxnUnsubscriber) rxnUnsubscriber();
-    const rxnRef = ref(db, `reactions/${currentSessionId}/${currentUser.uid}`);
+    // すでに同じセッションを購読中なら何もしない（無駄な再購読の防止）
+    if (rxnUnsubscriber && rxnMonitorSessionId === currentSessionId) return;
+    // 別セッションを購読中だった場合は解除してから貼り直す
+    if (rxnUnsubscriber) { rxnUnsubscriber(); rxnUnsubscriber = null; }
+
+    const monitoringSessionId = currentSessionId;
+    rxnMonitorSessionId = monitoringSessionId;
+    const rxnRef = ref(db, `reactions/${monitoringSessionId}/${currentUser.uid}`);
     rxnUnsubscriber = onValue(rxnRef, (snap) => {
       // 一旦すべての色をクリア
       document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
@@ -344,12 +352,12 @@
     if (!currentSessionId || !currentUser) return;
     const btn = document.getElementById(`rxn-${status}`);
     const rxnRef = ref(db, `reactions/${currentSessionId}/${currentUser.uid}`);
-    
+
     // すでに選択中のボタンを押した場合は「取り消し（DBから削除）」
     if (btn.classList.contains(`active-${status}`)) {
-      remove(rxnRef);
+      remove(rxnRef).catch(e => console.error(e));
     } else {
-      set(rxnRef, { status: status, timestamp: Date.now() });
+      set(rxnRef, { status: status, timestamp: Date.now() }).catch(e => console.error(e));
     }
   }
 
