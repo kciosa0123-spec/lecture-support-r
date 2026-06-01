@@ -163,6 +163,17 @@
     </div>
   </div>
 
+  <div id="confirm-modal" class="hidden" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;">
+    <div style="background: white; padding: 20px; border-radius: 10px; width: 90%; max-width: 400px; display: flex; flex-direction: column;">
+      <h3 id="confirm-title" style="margin-top: 0; color: #333; font-size: 16px;"></h3>
+      <p id="confirm-text" style="font-size: 13px; color: #444; line-height: 1.6; white-space: pre-wrap;"></p>
+      <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button id="confirm-cancel" class="btn-secondary" style="flex: 1; padding: 10px;">キャンセル</button>
+        <button id="confirm-ok" class="btn-danger" style="flex: 1; padding: 10px;">OK</button>
+      </div>
+    </div>
+  </div>
+
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
@@ -221,6 +232,38 @@
     currentAttData = {};
     currentAttCount = 0;
   }
+
+  // ＝＝＝ 汎用確認モーダル（ブラウザの confirm に依存しない） ＝＝＝
+  // 「このページでこれ以上ダイアログを表示しない」を押されても確実に動作する。
+  let confirmOkHandler = null;
+  function showConfirm({ title, message, okLabel = 'OK', okClass = 'btn-danger', onOk }) {
+    const modal = document.getElementById('confirm-modal');
+    document.getElementById('confirm-title').textContent = title || '';
+    document.getElementById('confirm-text').textContent = message || '';
+    const okBtn = document.getElementById('confirm-ok');
+    okBtn.textContent = okLabel;
+    okBtn.className = okClass;
+    confirmOkHandler = onOk;
+    modal.classList.remove('hidden');
+  }
+  function closeConfirm() {
+    document.getElementById('confirm-modal').classList.add('hidden');
+    confirmOkHandler = null;
+  }
+  document.getElementById('confirm-cancel').onclick = closeConfirm;
+  document.getElementById('confirm-ok').onclick = async () => {
+    const handler = confirmOkHandler;
+    closeConfirm();
+    if (handler) {
+      try {
+        await handler();
+      } catch (e) {
+        console.error(e);
+        alert("処理に失敗しました。通信環境を確認してください。");
+      }
+    }
+  };
+  // ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 
   const toggleBtn = document.getElementById('timetable-toggle-btn');
   const wrapper = document.getElementById('timetable-wrapper');
@@ -548,12 +591,19 @@
   };
   // ============================================
 
-  document.getElementById('reset-rxn-btn').onclick = async () => {
+  document.getElementById('reset-rxn-btn').onclick = () => {
     if (!viewingSessionId) return;
     const label = document.getElementById('current-display-label').textContent;
-    if (confirm(`「${label}」の学生リアクションを全てリセット（未回答に戻す）しますか？`)) {
-      await remove(ref(db, `reactions/${viewingSessionId}`));
-    }
+    showConfirm({
+      title: "🔄 リアクションのリセット",
+      message: `「${label}」の学生リアクションを全てリセット（未回答に戻す）しますか？`,
+      okLabel: "リセットする",
+      okClass: "btn-danger",
+      onOk: async () => {
+        if (!viewingSessionId) return;
+        await remove(ref(db, `reactions/${viewingSessionId}`));
+      }
+    });
   };
 
   document.getElementById('global-search-btn').onclick = async () => {
@@ -614,25 +664,43 @@
     if (!title || title === "科目を選択してください") {
       return alert("回を選択してから開始してください。");
     }
+
+    const doStart = async () => {
+      const now = Date.now();
+      await set(ref(db, 'active_session'), {
+        id: viewingSessionId,
+        title: title,
+        isOpen: true,
+        startedAt: now,
+        expiresAt: now + LECTURE_DURATION_MS
+      });
+      alert(`講義を開始しました。`);
+    };
+
     if (activeSessionId && activeSessionId !== viewingSessionId) {
-      if (!confirm(`別の講義「${activeSessionId}」が進行中です。\nこの回に切り替えますか？`)) return;
+      showConfirm({
+        title: "講義の切り替え",
+        message: `別の講義「${activeSessionId}」が進行中です。\nこの回に切り替えますか？`,
+        okLabel: "切り替える",
+        okClass: "btn-warning",
+        onOk: doStart
+      });
+    } else {
+      await doStart();
     }
-    const now = Date.now();
-    await set(ref(db, 'active_session'), {
-      id: viewingSessionId,
-      title: title,
-      isOpen: true,
-      startedAt: now,
-      expiresAt: now + LECTURE_DURATION_MS
-    });
-    alert(`講義を開始しました。`);
   };
 
-  document.getElementById('end-lecture-btn').onclick = async () => {
-    if (confirm("講義を終了します。学生の画面を待機中に戻します。")) {
-      await remove(ref(db, 'active_session'));
-      location.reload();
-    }
+  document.getElementById('end-lecture-btn').onclick = () => {
+    showConfirm({
+      title: "講義の終了",
+      message: "講義を終了します。学生の画面を待機中に戻します。",
+      okLabel: "終了する",
+      okClass: "btn-danger",
+      onOk: async () => {
+        await remove(ref(db, 'active_session'));
+        location.reload();
+      }
+    });
   };
 
   document.getElementById('export-csv-btn').onclick = async () => {
@@ -679,17 +747,26 @@
     a.click();
   };
 
-  document.getElementById('delete-btn').onclick = async () => {
-    if (confirm("この回のデータを完全に削除しますか？")) {
-      detachListeners();
-      await Promise.all([
-        remove(ref(db, `attendance/${viewingSessionId}`)),
-        remove(ref(db, `questions/${viewingSessionId}`)),
-        remove(ref(db, `reactions/${viewingSessionId}`))
-      ]);
-      if (viewingSessionId === activeSessionId) await remove(ref(db, 'active_session'));
-      location.reload();
-    }
+  document.getElementById('delete-btn').onclick = () => {
+    if (!viewingSessionId) return;
+    const targetId = viewingSessionId;
+    const label = document.getElementById('current-display-label').textContent;
+    showConfirm({
+      title: "データの完全削除",
+      message: `「${label}」の出席・質問・リアクションのデータを完全に削除しますか？\nこの操作は取り消せません。`,
+      okLabel: "削除する",
+      okClass: "btn-danger",
+      onOk: async () => {
+        detachListeners();
+        await Promise.all([
+          remove(ref(db, `attendance/${targetId}`)),
+          remove(ref(db, `questions/${targetId}`)),
+          remove(ref(db, `reactions/${targetId}`))
+        ]);
+        if (targetId === activeSessionId) await remove(ref(db, 'active_session'));
+        location.reload();
+      }
+    });
   };
 
   document.getElementById('toggle-list-btn').onclick = () => document.getElementById('att-list-container').classList.toggle('hidden');
