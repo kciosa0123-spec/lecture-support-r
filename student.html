@@ -29,6 +29,11 @@
     .rxn-btn.active-good { border-color: #34a853; background: #e6f4ea; color: #137333; }
     .rxn-btn.active-hard { border-color: #ea4335; background: #fce8e6; color: #c5221f; }
     .rxn-btn.active-wait { border-color: #fbbc04; background: #fef7e0; color: #b06000; }
+    .rxn-btn.pending { opacity: 0.6; }
+
+    /* トースト通知 */
+    #toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(20px); background: #333; color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.3s, transform 0.3s; pointer-events: none; z-index: 2000; max-width: 90%; text-align: center; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
@@ -86,6 +91,8 @@
     <button id="logout-btn" style="background: none; color: #888; font-size: 11px; text-decoration: underline; width: auto;">ログアウト</button>
   </div>
 </div>
+
+<div id="toast"></div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
@@ -348,16 +355,62 @@
     });
   }
 
-  function handleRxn(status) {
+  // トースト表示（数秒で自動的に消える簡易通知）
+  let toastTimer = null;
+  function showToast(message) {
+    const el = document.getElementById('toast');
+    el.textContent = message;
+    el.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  let rxnBusy = false; // 連打による競合を防ぐ
+  async function handleRxn(status) {
     if (!currentSessionId || !currentUser) return;
+    if (rxnBusy) return;
+    rxnBusy = true;
+
     const btn = document.getElementById(`rxn-${status}`);
     const rxnRef = ref(db, `reactions/${currentSessionId}/${currentUser.uid}`);
+    const isCancel = btn.classList.contains(`active-${status}`);
 
-    // すでに選択中のボタンを押した場合は「取り消し（DBから削除）」
-    if (btn.classList.contains(`active-${status}`)) {
-      remove(rxnRef).catch(e => console.error(e));
-    } else {
-      set(rxnRef, { status: status, timestamp: Date.now() }).catch(e => console.error(e));
+    // 書き込み前に active_session を取得して、ルール評価に必要なデータをローカルに同期させる。
+    // （同期が間に合わずに set が弾かれる事象への対策）
+    try {
+      const sessSnap = await get(ref(db, 'active_session'));
+      const sess = sessSnap.val();
+      const stillActive = !!(sess && sess.id === currentSessionId && sess.isOpen && sess.expiresAt > Date.now());
+      if (!stillActive) {
+        showToast("講義時間外のため記録できませんでした。");
+        rxnBusy = false;
+        return;
+      }
+    } catch (e) {
+      console.error(e);
+      // 取得に失敗しても、以降の書き込みは試みる（オフライン直後など）
+    }
+
+    // 楽観的に即フィードバック（成功を前提に色を反映）
+    document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
+    if (!isCancel) btn.classList.add(`active-${status}`);
+    btn.classList.add('pending');
+
+    try {
+      if (isCancel) {
+        await remove(rxnRef);
+      } else {
+        await set(rxnRef, { status: status, timestamp: Date.now() });
+      }
+      // 成功時は onValue 側が正しい状態に整えるので、ここでは pending を外すだけ
+    } catch (e) {
+      console.error(e);
+      // 失敗したら楽観的更新を取り消し、再試行を促す
+      document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
+      showToast("通信が不安定です。もう一度押してください。");
+    } finally {
+      btn.classList.remove('pending');
+      rxnBusy = false;
     }
   }
 
