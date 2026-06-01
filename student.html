@@ -424,8 +424,27 @@
     if (!bodyText || !currentSessionId) return;
 
     const sessionIdAtSend = currentSessionId;
-    const sid = document.getElementById('student-id').value.trim().toUpperCase();
-    const sname = document.getElementById('student-name').value.trim();
+
+    // 名前・学籍番号は複数のソースからフォールバックして確定する。
+    // 入力欄が（再描画やオートフィルの影響で）空に戻っていても、
+    // 出席時に記録済みの attendance や localStorage から正しい値を補う。
+    let sid = document.getElementById('student-id').value.trim().toUpperCase();
+    let sname = document.getElementById('student-name').value.trim();
+
+    if (!sid || !sname) {
+      try {
+        const attSnap = await get(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`));
+        const att = attSnap.val();
+        if (att) {
+          if (!sid && att.studentId) sid = String(att.studentId).toUpperCase();
+          if (!sname && att.name) sname = att.name;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    if (!sid) sid = (localStorage.getItem('ryu_student_id') || "").toUpperCase();
+    if (!sname) sname = localStorage.getItem('ryu_student_name') || "";
 
     try {
       const newQuestionRef = push(ref(db, `questions/${sessionIdAtSend}`));
