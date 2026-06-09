@@ -121,6 +121,10 @@
   let endedMessageTimer = null;
   let expiryWatcherStarted = false;
   let questionUnsubscribers = [];
+  // ライブリスナー(monitorSession)が保持する最新の active_session。
+  // 理解度ボタン押下時に、電波が悪い環境で固まりうる get() を使わずに、
+  // この値を同期的に参照して講義の有効性を判定するために使う。
+  let latestActiveSession = null;
 
   let offlineTimer = null;
   let connectedListenerRef = null;
@@ -232,6 +236,7 @@
   function monitorSession() {
     onValue(ref(db, 'active_session'), (snap) => {
       const val = snap.val();
+      latestActiveSession = val; // 最新の active_session を常にキャッシュ（リアクション判定で参照）
       const areaEl = document.getElementById('interactive-area');
       const isExpired = !!(val && val.expiresAt && Date.now() > val.expiresAt);
       const isActive = !!(val && val.isOpen && !isExpired);
@@ -375,21 +380,22 @@
     const rxnRef = ref(db, `reactions/${currentSessionId}/${currentUser.uid}`);
     const isCancel = btn.classList.contains(`active-${status}`);
 
-    // 書き込み前に active_session を取得して、ルール評価に必要なデータをローカルに同期させる。
-    // （同期が間に合わずに set が弾かれる事象への対策）
-    try {
-      const sessSnap = await get(ref(db, 'active_session'));
-      const sess = sessSnap.val();
-      const stillActive = !!(sess && sess.id === currentSessionId && sess.isOpen && sess.expiresAt > Date.now());
+    // 講義が有効かは、ライブリスナー(monitorSession)が常にキャッシュしている
+    // latestActiveSession を同期的に参照して判定する。ネットワーク取得(get)は行わない。
+    // ── 以前はここで get(active_session) を await していたが、電波の悪い環境では
+    //    応答が返らずに固まり、その間 rxnBusy が true のまま戻らないため、理解度
+    //    ボタンが二度と反応しなくなっていた（コメント送信で接続が復帰すると
+    //    固まっていた get が解決し、再び押せるようになる、という症状の正体）。
+    const sess = latestActiveSession;
+    if (sess) {
+      const stillActive = !!(sess.id === currentSessionId && sess.isOpen && sess.expiresAt > Date.now());
       if (!stillActive) {
         showToast("講義時間外のため記録できませんでした。");
         rxnBusy = false;
         return;
       }
-    } catch (e) {
-      console.error(e);
-      // 取得に失敗しても、以降の書き込みは試みる（オフライン直後など）
     }
+    // sess が未取得(null)の場合は判定を保留し、書き込みを試みてサーバのルールに委ねる。
 
     // 楽観的に即フィードバック（成功を前提に色を反映）
     document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
@@ -397,17 +403,24 @@
     btn.classList.add('pending');
 
     try {
-      if (isCancel) {
-        await remove(rxnRef);
-      } else {
-        await set(rxnRef, { status: status, timestamp: Date.now() });
-      }
+      const writePromise = isCancel
+        ? remove(rxnRef)
+        : set(rxnRef, { status: status, timestamp: Date.now() });
+
+      // 電波が悪いと set/remove の応答が長時間返らないことがある。その間ずっと
+      // 待ち続けると rxnBusy が戻らずボタンが固まるため、一定時間で待機を打ち切る。
+      // Firebase は接続が復帰した時点で保留中の書き込みを自動的に再送するので、
+      // ここで待機を諦めてもデータは失われず、最終的な状態は onValue が反映する。
+      await Promise.race([
+        writePromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('rxn-timeout')), 8000))
+      ]);
       // 成功時は onValue 側が正しい状態に整えるので、ここでは pending を外すだけ
     } catch (e) {
       console.error(e);
-      // 失敗したら楽観的更新を取り消し、再試行を促す
+      // 失敗・タイムアウト時は楽観的更新を取り消し、再試行を促す
       document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
-      showToast("通信が不安定です。もう一度押してください。");
+      showToast("通信が不安定です。反映されたか確認し、もう一度押してください。");
     } finally {
       btn.classList.remove('pending');
       rxnBusy = false;
