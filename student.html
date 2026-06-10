@@ -122,8 +122,8 @@
   let expiryWatcherStarted = false;
   let questionUnsubscribers = [];
   // ライブリスナー(monitorSession)が保持する最新の active_session。
-  // 理解度ボタン押下時に、電波が悪い環境で固まりうる get() を使わずに、
-  // この値を同期的に参照して講義の有効性を判定するために使う。
+  // 電波の悪い環境で固まりうる get() を使わずに、この値を同期的に参照して
+  // 講義の有効性・期限切れを判定するために使う。
   let latestActiveSession = null;
 
   let offlineTimer = null;
@@ -133,6 +133,20 @@
   // リアクションリスナー管理
   let rxnUnsubscriber = null;
   let rxnMonitorSessionId = null; // 現在リアクションを購読中のセッションID（重複購読防止）
+
+  // サーバー応答待ちを一定時間で打ち切る共通ヘルパー。
+  // タイムアウトしても元の書き込み自体は取り消されず、Firebaseが接続回復時に
+  // 自動的に再送する。書き込みの最終結果は元のPromiseの then/catch で受け取れる。
+  function withTimeout(promise, ms) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => {
+        const err = new Error('timeout');
+        err.isTimeout = true;
+        reject(err);
+      }, ms))
+    ]);
+  }
 
   function detachQuestionListeners() {
     questionUnsubscribers.forEach(unsub => unsub());
@@ -169,13 +183,20 @@
     document.getElementById('offline-warning').classList.add('hidden');
   }
 
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState !== 'visible' || !currentSessionId) return;
-    const snap = await get(ref(db, 'active_session'));
-    const val = snap.val();
-    if (val && val.expiresAt && Date.now() > val.expiresAt) {
+  // expiresAt はサーバーから一度届けば変化しない値なので、キャッシュ済みの
+  // latestActiveSession とローカル時計の比較だけで期限切れを判定できる。
+  // （旧実装はここで get() によりサーバーへ問い合わせていたため、オフライン中は
+  //   固まる・30秒ごとに未処理エラーが発生する問題があった。）
+  function checkExpiryLocally() {
+    if (!currentSessionId) return;
+    const s = latestActiveSession;
+    if (s && s.expiresAt && Date.now() > s.expiresAt) {
       handleSessionEnd();
     }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkExpiryLocally();
   });
 
   function handleSessionEnd() {
@@ -236,7 +257,7 @@
   function monitorSession() {
     onValue(ref(db, 'active_session'), (snap) => {
       const val = snap.val();
-      latestActiveSession = val; // 最新の active_session を常にキャッシュ（リアクション判定で参照）
+      latestActiveSession = val; // 最新の active_session を常にキャッシュ（リアクション判定・期限判定で参照）
       const areaEl = document.getElementById('interactive-area');
       const isExpired = !!(val && val.expiresAt && Date.now() > val.expiresAt);
       const isActive = !!(val && val.isOpen && !isExpired);
@@ -257,14 +278,7 @@
   function startExpiryWatcher() {
     if (expiryWatcherStarted) return;
     expiryWatcherStarted = true;
-    setInterval(async () => {
-      if (!currentSessionId) return;
-      const snap = await get(ref(db, 'active_session'));
-      const val = snap.val();
-      if (val && val.expiresAt && Date.now() > val.expiresAt) {
-        handleSessionEnd();
-      }
-    }, 30 * 1000);
+    setInterval(checkExpiryLocally, 30 * 1000);
   }
 
   async function checkAttendanceStatus() {
@@ -313,28 +327,58 @@
       }
     }
 
+    const sessionIdAtSend = currentSessionId;
+    localStorage.setItem('ryu_student_id', sid);
+    localStorage.setItem('ryu_student_name', sname);
+
+    // 書き込みは即座にFirebaseのキューに入る。電波が悪く応答が長時間返らない場合は
+    // 8秒で待機を打ち切り「送信待ち」表示に切り替える（接続回復時に自動送信される）。
+    // 旧実装はサーバー応答を無期限に await していたため、地下などの環境では
+    // ボタンが灰色のまま固まって見える問題があった。
+    const writePromise = set(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`), {
+      uid: currentUser.uid,
+      email: currentUser.email,
+      studentId: sid,
+      name: sname,
+      timestamp: Date.now()
+    });
+    writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
+
     try {
-      localStorage.setItem('ryu_student_id', sid);
-      localStorage.setItem('ryu_student_name', sname);
-      await set(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`), {
-        uid: currentUser.uid,
-        email: currentUser.email,
-        studentId: sid,
-        name: sname,
-        timestamp: Date.now()
-      });
+      await withTimeout(writePromise, 8000);
       checkAttendanceStatus();
       alert("出席を報告しました。");
     } catch (e) {
-      console.error(e);
-      const snap = await get(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`));
-      if (snap.exists()) {
-        checkAttendanceStatus();
-        alert("出席は既に記録されています。ご安心ください。");
-      } else {
-        btn.disabled = false;
-        alert("エラー: 送信できませんでした。もう一度お試しください。");
+      if (e && e.isTimeout) {
+        btn.textContent = "送信中…（電波の回復を待っています）";
+        showToast("電波が弱いため送信待ちです。回復すると自動的に記録されます。");
+        writePromise.then(() => {
+          showToast("出席が記録されました。");
+          checkAttendanceStatus();
+        }).catch(async () => {
+          // 接続回復後にサーバーから拒否された場合（講義終了後・記録済みなど）
+          try {
+            const snap = await withTimeout(get(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`)), 8000);
+            if (snap.exists()) { checkAttendanceStatus(); return; }
+          } catch (_) { /* 確認できない場合は再試行可能な状態に戻す */ }
+          btn.textContent = "出席 (Attendance) を報告";
+          btn.disabled = false;
+          showToast("出席を記録できませんでした。もう一度お試しください。");
+        });
+        return;
       }
+      // 即時にエラーが返った場合（権限エラー・記録済みなど）
+      console.error(e);
+      try {
+        const snap = await withTimeout(get(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`)), 8000);
+        if (snap.exists()) {
+          checkAttendanceStatus();
+          alert("出席は既に記録されています。ご安心ください。");
+          return;
+        }
+      } catch (_) { /* 確認不能：下のエラー表示にフォールバック */ }
+      btn.disabled = false;
+      alert("エラー: 送信できませんでした。もう一度お試しください。");
     }
   };
 
@@ -406,15 +450,13 @@
       const writePromise = isCancel
         ? remove(rxnRef)
         : set(rxnRef, { status: status, timestamp: Date.now() });
+      writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
 
       // 電波が悪いと set/remove の応答が長時間返らないことがある。その間ずっと
       // 待ち続けると rxnBusy が戻らずボタンが固まるため、一定時間で待機を打ち切る。
       // Firebase は接続が復帰した時点で保留中の書き込みを自動的に再送するので、
       // ここで待機を諦めてもデータは失われず、最終的な状態は onValue が反映する。
-      await Promise.race([
-        writePromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('rxn-timeout')), 8000))
-      ]);
+      await withTimeout(writePromise, 8000);
       // 成功時は onValue 側が正しい状態に整えるので、ここでは pending を外すだけ
     } catch (e) {
       console.error(e);
@@ -436,32 +478,39 @@
     const bodyText = document.getElementById('question-text').value.trim();
     if (!bodyText || !currentSessionId) return;
 
+    const sendBtn = document.getElementById('send-btn');
+    if (sendBtn.disabled) return;
+    sendBtn.disabled = true; // 二重送信防止（withTimeout により最大8秒で必ず解除される）
+
     const sessionIdAtSend = currentSessionId;
 
     // 名前・学籍番号は複数のソースからフォールバックして確定する。
     // 入力欄が（再描画やオートフィルの影響で）空に戻っていても、
     // 出席時に記録済みの attendance や localStorage から正しい値を補う。
+    // ※ attendance の取得は電波が悪いと固まりうるため、短いタイムアウト付き。
     let sid = document.getElementById('student-id').value.trim().toUpperCase();
     let sname = document.getElementById('student-name').value.trim();
 
     if (!sid || !sname) {
       try {
-        const attSnap = await get(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`));
+        const attSnap = await withTimeout(get(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`)), 3000);
         const att = attSnap.val();
         if (att) {
           if (!sid && att.studentId) sid = String(att.studentId).toUpperCase();
           if (!sname && att.name) sname = att.name;
         }
       } catch (e) {
-        console.error(e);
+        // 取得できなければ localStorage に委ねる
       }
     }
     if (!sid) sid = (localStorage.getItem('ryu_student_id') || "").toUpperCase();
     if (!sname) sname = localStorage.getItem('ryu_student_name') || "";
 
+    let qCard = null; // 即時失敗時に取り除けるよう外で宣言
+
     try {
       const newQuestionRef = push(ref(db, `questions/${sessionIdAtSend}`));
-      await set(newQuestionRef, {
+      const writePromise = set(newQuestionRef, {
         uid: currentUser.uid,
         email: currentUser.email,
         studentId: sid || "未入力",
@@ -470,46 +519,78 @@
         timestamp: Date.now(),
         read: false
       });
+      writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
 
-      document.getElementById('question-text').value = "";
-      const status = document.getElementById('send-status');
-      status.textContent = "送信完了！";
-      status.style.color = "#34a853";
-      setTimeout(() => { status.textContent = ""; }, 3000);
-
+      // 楽観的更新：先にカードを表示し、入力欄をクリアする。
+      // サーバー確認の結果に応じてカードのステータス表示を更新する。
       document.getElementById('my-questions-container').classList.remove('hidden');
       const qList = document.getElementById('my-questions-list');
-      const qCard = document.createElement('div');
+      qCard = document.createElement('div');
       qCard.style.cssText = 'background:#f8f9fa; border:1px solid #ddd; padding:10px; border-radius:8px; font-size:14px; text-align:left;';
       const qBody = document.createElement('div');
       qBody.textContent = bodyText;
       qCard.appendChild(qBody);
       const qStatus = document.createElement('div');
       qStatus.style.cssText = 'font-size:11px; margin-top:6px; font-weight:bold; color:#888;';
-      qStatus.textContent = "⏳ 教員の確認待ち...";
+      qStatus.textContent = "📡 送信中...";
       qCard.appendChild(qStatus);
       qList.prepend(qCard);
+      document.getElementById('question-text').value = "";
 
-      const unsubscribe = onValue(newQuestionRef, (snap) => {
-        const data = snap.val();
-        if (data && data.read === true) {
-          qStatus.textContent = "✅ 教員が確認しました";
-          qStatus.style.color = "#34a853";
-          qCard.style.background = "#e6f4ea";
-          qCard.style.borderColor = "#c6e1d0";
-          unsubscribe();
-          questionUnsubscribers = questionUnsubscribers.filter(f => f !== unsubscribe);
+      // サーバーに届いたことが確認できた時点で呼ぶ（既読監視の開始もここで行う）
+      const markDelivered = () => {
+        qStatus.textContent = "⏳ 教員の確認待ち...";
+        qStatus.style.color = "#888";
+        const unsubscribe = onValue(newQuestionRef, (snap) => {
+          const data = snap.val();
+          if (data && data.read === true) {
+            qStatus.textContent = "✅ 教員が確認しました";
+            qStatus.style.color = "#34a853";
+            qCard.style.background = "#e6f4ea";
+            qCard.style.borderColor = "#c6e1d0";
+            unsubscribe();
+            questionUnsubscribers = questionUnsubscribers.filter(f => f !== unsubscribe);
+          }
+        });
+        questionUnsubscribers.push(unsubscribe);
+      };
+
+      try {
+        await withTimeout(writePromise, 8000);
+        const status = document.getElementById('send-status');
+        status.textContent = "送信完了！";
+        status.style.color = "#34a853";
+        setTimeout(() => { status.textContent = ""; }, 3000);
+        markDelivered();
+      } catch (e) {
+        if (e && e.isTimeout) {
+          // 書き込みはキュー済み。接続回復時に自動送信される。
+          qStatus.textContent = "📡 送信待ち（電波の回復後に自動的に届きます）";
+          showToast("電波が弱いため送信待ちです。回復すると自動的に届きます。");
+          writePromise.then(markDelivered).catch(() => {
+            // 回復後にサーバーから拒否された場合（講義終了後など）
+            qStatus.textContent = "❌ 送信できませんでした";
+            qStatus.style.color = "#d93025";
+          });
+          return; // sendBtn は finally で解除される
         }
-      });
-      questionUnsubscribers.push(unsubscribe);
-
+        throw e; // 即時失敗は外側の catch へ
+      }
     } catch (e) {
       console.error(e);
+      // 即時失敗：カードを取り除き、入力内容を復元して従来どおり案内する
+      if (qCard) qCard.remove();
+      if (document.getElementById('my-questions-list').childElementCount === 0) {
+        document.getElementById('my-questions-container').classList.add('hidden');
+      }
+      document.getElementById('question-text').value = bodyText;
       if (!currentSessionId) {
         alert("講義が終了したため、メッセージを送信できませんでした。");
       } else {
         alert("送信に失敗しました。ページを再読み込みするか、ログイン状態を確認してください。");
       }
+    } finally {
+      sendBtn.disabled = false;
     }
   };
 
