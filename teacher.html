@@ -117,7 +117,7 @@
 
       <div id="reaction-panel" class="hidden" style="background: #f8f9fa; border: 2px solid #e9ecef; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span style="font-weight: bold; font-size: 13px; color: #333;">📊 クラスの理解度（リアルタイム）</span>
+          <span style="font-weight: bold; font-size: 13px; color: #333;">📊 クラスの理解度（リアルタイム） <span id="rxn-log-count" style="font-weight: normal; font-size: 11px; color: #888;"></span></span>
           <button id="reset-rxn-btn" class="btn-outline" style="font-size: 11px;">🔄 リセット</button>
         </div>
         <div style="display: flex; gap: 5px; font-size: 11px;">
@@ -177,7 +177,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-  import { getDatabase, ref, set, get, onValue, update, remove, off } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+  import { getDatabase, ref, set, push, get, onValue, update, remove, off } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAEaNHXsSc7oB9Shgz4sj-OptSwKtVzkWc",
@@ -216,6 +216,9 @@
   let rxnListener = null;
   let rawRxnData = {};
 
+  let logListenerRef = null;
+  let logListener = null;
+
   // 出席者の詳細データをローカルに保持（未回答者特定のため）
   let currentAttData = {};
   let currentAttCount = 0;
@@ -227,6 +230,8 @@
     if (attListenerRef && attListener) { off(attListenerRef, attListener); attListener = null; attListenerRef = null; }
     if (qListenerRef   && qListener)   { off(qListenerRef,   qListener);   qListener   = null; qListenerRef   = null; }
     if (rxnListenerRef && rxnListener) { off(rxnListenerRef, rxnListener); rxnListener = null; rxnListenerRef = null; }
+    if (logListenerRef && logListener) { off(logListenerRef, logListener); logListener = null; logListenerRef = null; }
+    document.getElementById('rxn-log-count').textContent = "";
     // 集計用ローカルデータも初期化（前の回のデータが残らないように）
     rawRxnData = {};
     currentAttData = {};
@@ -429,6 +434,12 @@
       activeSessionListener = onValue(activeSessionRef, async (snap) => {
         const val = snap.val();
         if (val && val.expiresAt && Date.now() > val.expiresAt) {
+          // 期限切れの自動終了：表示中のセッションなら最後のラウンドを記録し、
+          // 個人別の回答が残らないようリアクションを消去してから終了する
+          if (viewingSessionId === val.id) {
+            await logCurrentReactionRound(viewingSessionId);
+            await remove(ref(db, `reactions/${viewingSessionId}`));
+          }
           await remove(ref(db, 'active_session'));
           return;
         }
@@ -516,6 +527,34 @@
     }
   }
 
+  // 現在の集計を「1ラウンド」として reaction_logs に記録する。
+  // 記録するのは人数（割合のもとになる値）と未回答者の一覧のみで、
+  // 誰がどのボタンを押したか（個人別の回答内容）は記録しない。
+  // リアクションが1件もない場合は誤操作とみなし、記録しない。
+  async function logCurrentReactionRound(sessionId) {
+    if (!sessionId || currentAttCount === 0) return;
+    let good = 0, hard = 0, wait = 0;
+    const unanswered = [];
+    Object.entries(currentAttData).forEach(([uid, st]) => {
+      const d = rawRxnData[uid];
+      if (d && d.status === 'good') good++;
+      else if (d && d.status === 'hard') hard++;
+      else if (d && d.status === 'wait') wait++;
+      else unanswered.push({ uid: uid, studentId: (st && st.studentId) || "", name: (st && st.name) || "" });
+    });
+    if (good + hard + wait === 0) return;
+    unanswered.sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
+    await set(push(ref(db, `reaction_logs/${sessionId}`)), {
+      timestamp: Date.now(),
+      attendance: currentAttCount,
+      good: good,
+      hard: hard,
+      wait: wait,
+      unansweredCount: unanswered.length,
+      unanswered: unanswered
+    });
+  }
+
   function startMonitoring(sessionId) {
     const attBody = document.getElementById('att-list-body');
     const qCont = document.getElementById('questions-container');
@@ -538,6 +577,12 @@
     rxnListener = onValue(rxnListenerRef, (s) => {
       rawRxnData = s.val() || {};
       updateReactionSummary();
+    });
+
+    logListenerRef = ref(db, `reaction_logs/${sessionId}`);
+    logListener = onValue(logListenerRef, (s) => {
+      const n = s.val() ? Object.keys(s.val()).length : 0;
+      document.getElementById('rxn-log-count').textContent = n > 0 ? `（記録済み ${n}ラウンド）` : "";
     });
 
     qListenerRef = ref(db, `questions/${sessionId}`);
@@ -599,11 +644,12 @@
     const label = document.getElementById('current-display-label').textContent;
     showConfirm({
       title: "🔄 リアクションのリセット",
-      message: `「${label}」の学生リアクションを全てリセット（未回答に戻す）しますか？`,
-      okLabel: "リセットする",
+      message: `「${label}」の現在の集計（順調・難しい・待っての人数と未回答者）を1ラウンド分として記録してから、全員を未回答に戻します。`,
+      okLabel: "記録してリセット",
       okClass: "btn-danger",
       onOk: async () => {
         if (!viewingSessionId) return;
+        await logCurrentReactionRound(viewingSessionId);
         await remove(ref(db, `reactions/${viewingSessionId}`));
       }
     });
@@ -700,6 +746,11 @@
       okLabel: "終了する",
       okClass: "btn-danger",
       onOk: async () => {
+        // 最後のラウンドを記録し、個人別の回答が残らないようリアクションを消去してから終了する
+        if (viewingSessionId && viewingSessionId === activeSessionId) {
+          await logCurrentReactionRound(viewingSessionId);
+          await remove(ref(db, `reactions/${viewingSessionId}`));
+        }
         await remove(ref(db, 'active_session'));
         location.reload();
       }
@@ -707,15 +758,22 @@
   };
 
   document.getElementById('export-csv-btn').onclick = async () => {
-    const [attSnap, qSnap, rxnSnap] = await Promise.all([
+    const [attSnap, qSnap, logSnap] = await Promise.all([
       get(ref(db, `attendance/${viewingSessionId}`)),
       get(ref(db, `questions/${viewingSessionId}`)),
-      get(ref(db, `reactions/${viewingSessionId}`))
+      get(ref(db, `reaction_logs/${viewingSessionId}`))
     ]);
     const attData = attSnap.val() || {};
     const qData = qSnap.val() || {};
-    const rxnData = rxnSnap.val() || {};
-    const rxnLabels = { good: '順調', hard: '難しい', wait: '待って' };
+    // 理解度チェックのラウンド記録（時系列順）
+    const logs = Object.values(logSnap.val() || {}).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    // 学生ごとの未回答回数を集計（誰がどのボタンを押したかは記録も出力もしない）
+    const missedByUid = {};
+    logs.forEach(l => {
+      const un = l.unanswered ? Object.values(l.unanswered) : [];
+      un.forEach(u => { if (u && u.uid) missedByUid[u.uid] = (missedByUid[u.uid] || 0) + 1; });
+    });
 
     const qByUid = {};
     Object.values(qData).forEach(q => {
@@ -736,14 +794,32 @@
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    let csv = "\uFEFF学籍番号,氏名,出席時刻,最終理解度,質問内容\n";
+    let csv = `\uFEFF学籍番号,氏名,出席時刻,未回答回数(全${logs.length}ラウンド),質問内容\n`;
     list.forEach(e => {
       const questions = qByUid[e.uid] || [];
       const combined = questions.join(" / ");
       const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : "";
-      const rxnStatus = rxnData[e.uid] ? rxnLabels[rxnData[e.uid].status] : '未回答';
-      csv += `${esc(e.studentId)},${esc(e.name)},${esc(timeStr)},${esc(rxnStatus)},${esc(combined)}\n`;
+      const missed = missedByUid[e.uid] || 0;
+      csv += `${esc(e.studentId)},${esc(e.name)},${esc(timeStr)},${missed},${esc(combined)}\n`;
     });
+
+    // 理解度チェックのラウンドごとの記録（割合と未回答者）を末尾に追加
+    if (logs.length > 0) {
+      csv += `\n理解度チェックの記録（全${logs.length}ラウンド）\n`;
+      csv += "記録時刻,出席数,順調,難しい,待って,未回答,順調%,難しい%,待って%,未回答%,未回答者\n";
+      logs.forEach(l => {
+        const total = l.attendance || 0;
+        const good = l.good || 0, hard = l.hard || 0, wait = l.wait || 0;
+        const none = (l.unansweredCount != null) ? l.unansweredCount : Math.max(0, total - good - hard - wait);
+        const pct = (n) => total > 0 ? Math.round((n / total) * 100) + "%" : "0%";
+        const unList = (l.unanswered ? Object.values(l.unanswered) : [])
+          .map(u => `${(u && u.studentId) || ''} ${(u && u.name) || ''}`.trim())
+          .filter(Boolean)
+          .join(" / ");
+        const t = l.timestamp ? new Date(l.timestamp).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' }) : "";
+        csv += `${esc(t)},${total},${good},${hard},${wait},${none},${pct(good)},${pct(hard)},${pct(wait)},${pct(none)},${esc(unList)}\n`;
+      });
+    }
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -758,7 +834,7 @@
     const label = document.getElementById('current-display-label').textContent;
     showConfirm({
       title: "データの完全削除",
-      message: `「${label}」の出席・質問・リアクションのデータを完全に削除しますか？\nこの操作は取り消せません。`,
+      message: `「${label}」の出席・質問・リアクション・理解度記録のデータを完全に削除しますか？\nこの操作は取り消せません。`,
       okLabel: "削除する",
       okClass: "btn-danger",
       onOk: async () => {
@@ -766,7 +842,8 @@
         await Promise.all([
           remove(ref(db, `attendance/${targetId}`)),
           remove(ref(db, `questions/${targetId}`)),
-          remove(ref(db, `reactions/${targetId}`))
+          remove(ref(db, `reactions/${targetId}`)),
+          remove(ref(db, `reaction_logs/${targetId}`))
         ]);
         if (targetId === activeSessionId) await remove(ref(db, 'active_session'));
         location.reload();
