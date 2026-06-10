@@ -375,7 +375,10 @@
     const btn = document.getElementById(`btn-${day}-${p}-${num}`);
     const dayName = { mon: "月", tue: "火", fri: "金" }[day];
     const now = new Date();
-    const dStrToday = now.toISOString().slice(0, 10).replace(/-/g, "");
+    // ローカル（日本時間）の日付で組み立てる。
+    // 旧実装の toISOString() はUTC日付を返すため、日本時間の朝9時より前に
+    // 新規セッションを作成すると、IDとラベルの日付が前日になっていた。
+    const dStrToday = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const id = btn.dataset.actualId || `${dStrToday}_${dayName}${p}${sub}第${num}回`;
 
     detachListeners();
@@ -727,7 +730,9 @@
       .sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
 
     const esc = (v) => {
-      const s = String(v == null ? "" : v);
+      let s = String(v == null ? "" : v);
+      // 先頭が = + - @ の場合、Excelで数式として解釈されるのを防ぐ（CSVインジェクション対策）
+      if (/^[=+\-@]/.test(s)) s = "'" + s;
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
