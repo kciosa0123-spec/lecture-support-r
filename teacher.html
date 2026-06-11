@@ -117,7 +117,7 @@
 
       <div id="reaction-panel" class="hidden" style="background: #f8f9fa; border: 2px solid #e9ecef; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span style="font-weight: bold; font-size: 13px; color: #333;">📊 クラスの理解度（リアルタイム） <span id="rxn-log-count" style="font-weight: normal; font-size: 11px; color: #888;"></span></span>
+          <span style="font-weight: bold; font-size: 13px; color: #333;">📊 クラスの理解度（リアルタイム） <span id="rxn-round-label" style="font-weight: normal; font-size: 11px; color: #555;"></span> <span id="rxn-log-count" style="font-weight: normal; font-size: 11px; color: #888;"></span></span>
           <button id="reset-rxn-btn" class="btn-outline" style="font-size: 11px;">🔄 リセット</button>
         </div>
         <div style="display: flex; gap: 5px; font-size: 11px;">
@@ -207,6 +207,9 @@
   let activeSessionId = "";
   let offlineTimer = null;
 
+  // 最新の active_session の中身（round の参照・引き継ぎに使う）
+  let currentActiveSession = null;
+
   let attListener = null;
   let attListenerRef = null;
   let qListener = null;
@@ -225,6 +228,15 @@
 
   let activeSessionListener = null;
   let activeSessionRef = null;
+
+  // 端末の時計のズレを補正するためのサーバー時刻オフセット。
+  // startedAt はルール側で「サーバー時刻±60秒」と検証されるため、教員PCの時計が
+  // ずれていると講義開始自体が失敗する。必ず補正済みの時刻を使う。
+  let serverTimeOffset = 0;
+  onValue(ref(db, '.info/serverTimeOffset'), (snap) => {
+    serverTimeOffset = snap.val() || 0;
+  });
+  function serverNow() { return Date.now() + serverTimeOffset; }
 
   function detachListeners() {
     if (attListenerRef && attListener) { off(attListenerRef, attListener); attListener = null; attListenerRef = null; }
@@ -376,6 +388,46 @@
     }
   }
 
+  // 表示中のセッションが進行中の講義なら、その現在のラウンド番号を返す。
+  // 過去データの閲覧時などは null（＝ラウンドで絞り込まない）。
+  function currentRoundForViewing() {
+    if (viewingSessionId && viewingSessionId === activeSessionId && currentActiveSession) {
+      return (typeof currentActiveSession.round === 'number') ? currentActiveSession.round : 1;
+    }
+    return null;
+  }
+
+  // 理解度パネルのラウンド番号表示を更新
+  function updateRoundLabel() {
+    const el = document.getElementById('rxn-round-label');
+    const round = currentRoundForViewing();
+    el.textContent = (round != null) ? `第${round}ラウンド` : "";
+  }
+
+  // リアクションが「現在のラウンドの有効な回答」かを判定する。
+  // 電波の悪い学生の保留書き込みがリセット後に届いた場合などの古いラウンドの
+  // データは、サーバールールで拒否されるが、念のためクライアント側でも除外する。
+  function isValidReaction(d, round) {
+    if (!d || !d.status) return false;
+    if (round == null) return true;
+    return (typeof d.round !== 'number') || d.round === round;
+  }
+
+  // 出席データ＋リアクションデータから1ラウンド分の集計を作る共通関数
+  function summarizeReactions(attData, rxnData, round) {
+    let good = 0, hard = 0, wait = 0;
+    const unanswered = [];
+    Object.entries(attData || {}).forEach(([uid, st]) => {
+      const d = (rxnData || {})[uid];
+      if (isValidReaction(d, round) && d.status === 'good') good++;
+      else if (isValidReaction(d, round) && d.status === 'hard') hard++;
+      else if (isValidReaction(d, round) && d.status === 'wait') wait++;
+      else unanswered.push({ uid: uid, studentId: (st && st.studentId) || "", name: (st && st.name) || "" });
+    });
+    unanswered.sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
+    return { good, hard, wait, unanswered };
+  }
+
   window.loadSession = (day, sub, p, num) => {
     const btn = document.getElementById(`btn-${day}-${p}-${num}`);
     const dayName = { mon: "月", tue: "火", fri: "金" }[day];
@@ -400,6 +452,7 @@
     document.getElementById('data-actions').classList.toggle('hidden', !btn.classList.contains('has-data'));
 
     updateStartButtonState();
+    updateRoundLabel();
     startMonitoring(id);
 
     wrapper.style.display = 'none';
@@ -433,7 +486,8 @@
       activeSessionRef = ref(db, 'active_session');
       activeSessionListener = onValue(activeSessionRef, async (snap) => {
         const val = snap.val();
-        if (val && val.expiresAt && Date.now() > val.expiresAt) {
+        currentActiveSession = val || null;
+        if (val && val.expiresAt && serverNow() > val.expiresAt) {
           // 期限切れの自動終了：表示中のセッションなら最後のラウンドを記録し、
           // 個人別の回答が残らないようリアクションを消去してから終了する
           if (viewingSessionId === val.id) {
@@ -446,6 +500,9 @@
         activeSessionId = (val && val.isOpen) ? val.id : "";
         document.getElementById('end-lecture-btn').classList.toggle('hidden', !activeSessionId);
         updateStartButtonState();
+        updateRoundLabel();
+        // round の変化（リセット）でも集計を更新する
+        updateReactionSummary();
       });
     } else {
       alert("教員アカウントではありません。");
@@ -494,18 +551,11 @@
     return card;
   }
 
-  // 出席者の uid 集合を基準に集計する（出席者以外のリアクションは数えない）
+  // 出席者の uid 集合を基準に集計する（出席者以外のリアクションは数えない）。
+  // 進行中の講義では現在のラウンドの回答だけを有効として数える。
   function updateReactionSummary() {
-    let good = 0, hard = 0, wait = 0;
-    const attUids = Object.keys(currentAttData);
-
-    attUids.forEach(uid => {
-      const d = rawRxnData[uid];
-      if (!d) return;
-      if (d.status === 'good') good++;
-      else if (d.status === 'hard') hard++;
-      else if (d.status === 'wait') wait++;
-    });
+    const round = currentRoundForViewing();
+    const { good, hard, wait } = summarizeReactions(currentAttData, rawRxnData, round);
 
     const total = currentAttCount;
     const reacted = good + hard + wait;
@@ -533,19 +583,11 @@
   // リアクションが1件もない場合は誤操作とみなし、記録しない。
   async function logCurrentReactionRound(sessionId) {
     if (!sessionId || currentAttCount === 0) return;
-    let good = 0, hard = 0, wait = 0;
-    const unanswered = [];
-    Object.entries(currentAttData).forEach(([uid, st]) => {
-      const d = rawRxnData[uid];
-      if (d && d.status === 'good') good++;
-      else if (d && d.status === 'hard') hard++;
-      else if (d && d.status === 'wait') wait++;
-      else unanswered.push({ uid: uid, studentId: (st && st.studentId) || "", name: (st && st.name) || "" });
-    });
+    const round = currentRoundForViewing();
+    const { good, hard, wait, unanswered } = summarizeReactions(currentAttData, rawRxnData, round);
     if (good + hard + wait === 0) return;
-    unanswered.sort((a, b) => (a.studentId || "").localeCompare(b.studentId || ""));
     await set(push(ref(db, `reaction_logs/${sessionId}`)), {
-      timestamp: Date.now(),
+      timestamp: serverNow(),
       attendance: currentAttCount,
       good: good,
       hard: hard,
@@ -553,6 +595,40 @@
       unansweredCount: unanswered.length,
       unanswered: unanswered
     });
+  }
+
+  // 【追加】表示していない（＝ローカルにデータを持っていない）セッションの後始末。
+  // 別の講義へ切り替える際、進行中だった旧セッションの最終ラウンドをサーバーから
+  // 取得して記録し、個人別の回答が残らないようリアクションを消去する。
+  // 旧実装は切り替え時に何もしなかったため、旧セッションのリアクションが
+  // 記録もされずDBに残骸として残っていた。
+  async function finalizeOtherSession(sessionId) {
+    try {
+      const [attSnap, rxnSnap] = await Promise.all([
+        get(ref(db, `attendance/${sessionId}`)),
+        get(ref(db, `reactions/${sessionId}`))
+      ]);
+      const attData = attSnap.val() || {};
+      const rxnData = rxnSnap.val() || {};
+      const total = Object.keys(attData).length;
+      if (total > 0) {
+        const { good, hard, wait, unanswered } = summarizeReactions(attData, rxnData, null);
+        if (good + hard + wait > 0) {
+          await set(push(ref(db, `reaction_logs/${sessionId}`)), {
+            timestamp: serverNow(),
+            attendance: total,
+            good: good,
+            hard: hard,
+            wait: wait,
+            unansweredCount: unanswered.length,
+            unanswered: unanswered
+          });
+        }
+      }
+      await remove(ref(db, `reactions/${sessionId}`));
+    } catch (e) {
+      console.warn("旧セッションの後始末に失敗:", e);
+    }
   }
 
   function startMonitoring(sessionId) {
@@ -604,10 +680,11 @@
   document.getElementById('stat-none').onclick = () => {
     if (!viewingSessionId || currentAttCount === 0) return;
 
-    // 出席者のうち、リアクションデータが存在しない学生を抽出
+    // 出席者のうち、現在のラウンドの有効なリアクションが無い学生を抽出
+    const round = currentRoundForViewing();
     const unreacted = [];
     Object.values(currentAttData).forEach(st => {
-      if (st && st.uid && !rawRxnData[st.uid]) unreacted.push(st);
+      if (st && st.uid && !isValidReaction(rawRxnData[st.uid], round)) unreacted.push(st);
     });
 
     // 学籍番号順にソート
@@ -644,13 +721,28 @@
     const label = document.getElementById('current-display-label').textContent;
     showConfirm({
       title: "🔄 リアクションのリセット",
-      message: `「${label}」の現在の集計（順調・難しい・待っての人数と未回答者）を1ラウンド分として記録してから、全員を未回答に戻します。`,
+      message: `「${label}」の現在の集計（順調・難しい・待っての人数と未回答者）を1ラウンド分として記録してから、全員を未回答に戻します。\n学生の画面には「新しい理解度チェックが始まりました」と通知されます。`,
       okLabel: "記録してリセット",
       okClass: "btn-danger",
       onOk: async () => {
         if (!viewingSessionId) return;
         await logCurrentReactionRound(viewingSessionId);
-        await remove(ref(db, `reactions/${viewingSessionId}`));
+        if (viewingSessionId === activeSessionId && currentActiveSession) {
+          // ラウンド番号を +1 しつつ、リアクションを「同じ書き込みで」原子的に消去する。
+          // 学生側は active_session/round の変化を（既存のライブリスナー経由で）検知して
+          // 全端末のボタンを確実に初期化する。削除イベント頼みだった旧方式と違い、
+          // スリープ復帰後の端末にも round の値として確実に伝わる。
+          // また、記録(log)と消去の間に滑り込んだ回答が記録されず消える競合も、
+          // 消去と round 更新が原子的になることで最小化される。
+          const cur = (typeof currentActiveSession.round === 'number') ? currentActiveSession.round : 1;
+          await update(ref(db), {
+            ['reactions/' + viewingSessionId]: null,
+            'active_session/round': cur + 1
+          });
+        } else {
+          // 進行中の講義でなければ単純に消去（round は触らない）
+          await remove(ref(db, `reactions/${viewingSessionId}`));
+        }
       }
     });
   };
@@ -715,13 +807,24 @@
     }
 
     const doStart = async () => {
-      const now = Date.now();
+      // 別の講義が進行中だった場合は、その最終ラウンドを記録し、
+      // リアクションを消去してから切り替える（終了処理と同等の後始末）
+      if (activeSessionId && activeSessionId !== viewingSessionId) {
+        await finalizeOtherSession(activeSessionId);
+      }
+      // 同じ講義の「更新」（時間延長など）の場合は進行中のラウンド番号を引き継ぐ。
+      // 新規開始・再開の場合は第1ラウンドから。
+      const keepRound = (activeSessionId === viewingSessionId && currentActiveSession && typeof currentActiveSession.round === 'number')
+        ? currentActiveSession.round
+        : 1;
+      const now = serverNow();
       await set(ref(db, 'active_session'), {
         id: viewingSessionId,
         title: title,
         isOpen: true,
         startedAt: now,
-        expiresAt: now + LECTURE_DURATION_MS
+        expiresAt: now + LECTURE_DURATION_MS,
+        round: keepRound
       });
       alert(`講義を開始しました。`);
     };
@@ -729,7 +832,7 @@
     if (activeSessionId && activeSessionId !== viewingSessionId) {
       showConfirm({
         title: "講義の切り替え",
-        message: `別の講義「${activeSessionId}」が進行中です。\nこの回に切り替えますか？`,
+        message: `別の講義「${activeSessionId}」が進行中です。\n進行中の講義の理解度を記録・後始末してから、この回に切り替えますか？`,
         okLabel: "切り替える",
         okClass: "btn-warning",
         onOk: doStart
