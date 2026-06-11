@@ -24,12 +24,15 @@
     .profile-box { background: #fffbe6; border: 1px solid #ffe58f; }
 
     /* リアクションボタン用CSS */
-    .rxn-row { display: flex; gap: 8px; margin-bottom: 15px; }
+    .rxn-row { display: flex; gap: 8px; margin-bottom: 8px; }
     .rxn-btn { flex: 1; padding: 10px 5px; font-size: 13px; border: 2px solid #ddd; border-radius: 8px; background: #fff; color: #555; font-weight: bold; cursor: pointer; transition: 0.2s; text-align: center; }
     .rxn-btn.active-good { border-color: #34a853; background: #e6f4ea; color: #137333; }
     .rxn-btn.active-hard { border-color: #ea4335; background: #fce8e6; color: #c5221f; }
     .rxn-btn.active-wait { border-color: #fbbc04; background: #fef7e0; color: #b06000; }
     .rxn-btn.pending { opacity: 0.6; }
+
+    /* リアクション送信状態の表示行 */
+    #rxn-status { font-size: 11px; text-align: center; margin: 0 0 12px 0; min-height: 1.2em; font-weight: bold; color: #34a853; }
 
     /* トースト通知 */
     #toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(20px); background: #333; color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.3s, transform 0.3s; pointer-events: none; z-index: 2000; max-width: 90%; text-align: center; }
@@ -73,6 +76,7 @@
         <button id="rxn-hard" class="rxn-btn">😓 難しい</button>
         <button id="rxn-wait" class="rxn-btn">✋ 待って</button>
       </div>
+      <p id="rxn-status"></p>
       <hr style="border:0; border-top:1px dashed #ccc; margin:15px 0;">
 
       <label>質問・メッセージ</label>
@@ -126,6 +130,10 @@
   // 講義の有効性・期限切れを判定するために使う。
   let latestActiveSession = null;
 
+  // 現在見えているラウンド番号（教員のリセットで active_session/round が +1 される）。
+  // null は「まだ一度も観測していない」状態（初回ロード時のトースト誤発火防止）。
+  let lastSeenRound = null;
+
   let offlineTimer = null;
   let connectedListenerRef = null;
   let connectedListener = null;
@@ -133,6 +141,15 @@
   // リアクションリスナー管理
   let rxnUnsubscriber = null;
   let rxnMonitorSessionId = null; // 現在リアクションを購読中のセッションID（重複購読防止）
+
+  // 端末の時計のズレを補正するためのサーバー時刻オフセット。
+  // 期限切れ判定や timestamp の生成に端末の時計を直接使うと、時計のずれた端末で
+  // 「講義時間外」と誤判定されたり、ルールの timestamp 検証に弾かれたりするため。
+  let serverTimeOffset = 0;
+  onValue(ref(db, '.info/serverTimeOffset'), (snap) => {
+    serverTimeOffset = snap.val() || 0;
+  });
+  function serverNow() { return Date.now() + serverTimeOffset; }
 
   // サーバー応答待ちを一定時間で打ち切る共通ヘルパー。
   // タイムアウトしても元の書き込み自体は取り消されず、Firebaseが接続回復時に
@@ -146,6 +163,25 @@
         reject(err);
       }, ms))
     ]);
+  }
+
+  // 現在のラウンド番号（active_session 未取得・round 未設定なら 1 とみなす）
+  function currentRound() {
+    const s = latestActiveSession;
+    return (s && typeof s.round === 'number') ? s.round : 1;
+  }
+
+  // リアクションの送信状態を示す常設の小さなステータス行
+  function setRxnStatus(text, color) {
+    const el = document.getElementById('rxn-status');
+    el.textContent = text || "";
+    el.style.color = color || "#34a853";
+  }
+
+  // リアクションUI（色・pending・ステータス行）を初期状態に戻す
+  function resetRxnUI() {
+    document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait', 'pending'));
+    setRxnStatus("");
   }
 
   function detachQuestionListeners() {
@@ -184,13 +220,13 @@
   }
 
   // expiresAt はサーバーから一度届けば変化しない値なので、キャッシュ済みの
-  // latestActiveSession とローカル時計の比較だけで期限切れを判定できる。
+  // latestActiveSession とサーバー補正済みの時刻の比較だけで期限切れを判定できる。
   // （旧実装はここで get() によりサーバーへ問い合わせていたため、オフライン中は
   //   固まる・30秒ごとに未処理エラーが発生する問題があった。）
   function checkExpiryLocally() {
     if (!currentSessionId) return;
     const s = latestActiveSession;
-    if (s && s.expiresAt && Date.now() > s.expiresAt) {
+    if (s && s.expiresAt && serverNow() > s.expiresAt) {
       handleSessionEnd();
     }
   }
@@ -201,6 +237,7 @@
 
   function handleSessionEnd() {
     currentSessionId = null;
+    lastSeenRound = null;
     document.getElementById('interactive-area').classList.add('hidden');
     setLock(false);
     document.getElementById('question-section').classList.add('hidden');
@@ -209,7 +246,7 @@
     document.getElementById('my-questions-list').replaceChildren();
 
     // リアクションUIのリセット
-    document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
+    resetRxnUI();
 
     if (wasInLecture) {
       showLectureEndedMessage();
@@ -259,15 +296,39 @@
       const val = snap.val();
       latestActiveSession = val; // 最新の active_session を常にキャッシュ（リアクション判定・期限判定で参照）
       const areaEl = document.getElementById('interactive-area');
-      const isExpired = !!(val && val.expiresAt && Date.now() > val.expiresAt);
+      const isExpired = !!(val && val.expiresAt && serverNow() > val.expiresAt);
       const isActive = !!(val && val.isOpen && !isExpired);
 
       if (isActive) {
+        const sessionChanged = currentSessionId !== val.id;
         currentSessionId = val.id;
         document.getElementById('session-info').textContent = "講義中：" + (val.title || "（タイトル未設定）");
         areaEl.classList.remove('hidden');
         wasInLecture = true;
-        checkAttendanceStatus();
+
+        // ＝＝＝ ラウンド番号の監視（理解度ボタンの確実なリセット） ＝＝＝
+        // 教員が「リセット」すると active_session/round が +1 される。
+        // 旧実装は reactions の削除イベント頼みだったため、スリープ復帰直後や
+        // 電波の悪い端末では削除が届かず、古い色が残ったままになっていた。
+        // active_session は既存のライブリスナーで確実に届くため、この値の変化を
+        // 起点に全端末のボタンを初期化し、学生にトーストで知らせる。
+        const round = (typeof val.round === 'number') ? val.round : 1;
+        if (sessionChanged) lastSeenRound = null;
+        if (lastSeenRound === null) {
+          // 初回観測（ページを開いた直後など）は静かに記憶するだけ
+          lastSeenRound = round;
+        } else if (round !== lastSeenRound) {
+          lastSeenRound = round;
+          resetRxnUI();
+          showToast("📊 新しい理解度チェックが始まりました。ボタンで回答してください。");
+        }
+        // ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+
+        // 出席確認は、講義が切り替わった時か、まだ出席UIが開いていない時だけ行う
+        // （リセットのたびに get が走るのを防ぐ）
+        if (sessionChanged || document.getElementById('question-section').classList.contains('hidden')) {
+          checkAttendanceStatus();
+        }
       } else {
         handleSessionEnd();
         if (!wasInLecture) showWaitingMessage();
@@ -281,13 +342,40 @@
     setInterval(checkExpiryLocally, 30 * 1000);
   }
 
+  // このセッションで出席済みであることを端末内に記録する。
+  // （電波が悪く attendance の get で確認できない場合のフォールバック用）
+  // 古いセッションのフラグは溜まらないよう、保存時に掃除する。
+  function rememberAttendanceDone(sessionId) {
+    try {
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('ryu_att_done_') && k !== 'ryu_att_done_' + sessionId)
+        .forEach(k => localStorage.removeItem(k));
+      localStorage.setItem('ryu_att_done_' + sessionId, '1');
+    } catch (_) { /* localStorage が使えない環境では何もしない */ }
+  }
+
+  // 【修正】旧実装は素の get() を無期限に await し、try/catch も無かったため、
+  // 電波の悪い場所では固まって質問・リアクション欄が永遠に表示されない、
+  // あるいは未処理エラーになる問題があった（以前修正したのと同型のバグ）。
+  // タイムアウト付きにし、確認できない場合は端末内の出席済みフラグへフォールバックする。
   async function checkAttendanceStatus() {
     if (!currentSessionId || !currentUser) return;
-    const snap = await get(ref(db, `attendance/${currentSessionId}/${currentUser.uid}`));
+    const sessionIdAtCheck = currentSessionId;
+    let attended;
+    try {
+      const snap = await withTimeout(get(ref(db, `attendance/${sessionIdAtCheck}/${currentUser.uid}`)), 8000);
+      attended = snap.exists();
+      if (attended) rememberAttendanceDone(sessionIdAtCheck);
+    } catch (e) {
+      // サーバーで確認できない：この端末でこのセッションの出席を送信済みならUIを開く
+      attended = localStorage.getItem('ryu_att_done_' + sessionIdAtCheck) === '1';
+    }
+    if (sessionIdAtCheck !== currentSessionId) return; // 待機中に講義が切り替わっていたら破棄
+
     const btn = document.getElementById('attendance-btn');
     const qSection = document.getElementById('question-section');
 
-    if (snap.exists()) {
+    if (attended) {
       btn.textContent = "出席報告済み (Submitted)";
       btn.disabled = true;
       setLock(true);
@@ -340,12 +428,13 @@
       email: currentUser.email,
       studentId: sid,
       name: sname,
-      timestamp: Date.now()
+      timestamp: serverNow()
     });
     writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
 
     try {
       await withTimeout(writePromise, 8000);
+      rememberAttendanceDone(sessionIdAtSend);
       checkAttendanceStatus();
       alert("出席を報告しました。");
     } catch (e) {
@@ -353,13 +442,14 @@
         btn.textContent = "送信中…（電波の回復を待っています）";
         showToast("電波が弱いため送信待ちです。回復すると自動的に記録されます。");
         writePromise.then(() => {
+          rememberAttendanceDone(sessionIdAtSend);
           showToast("出席が記録されました。");
           checkAttendanceStatus();
         }).catch(async () => {
           // 接続回復後にサーバーから拒否された場合（講義終了後・記録済みなど）
           try {
             const snap = await withTimeout(get(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`)), 8000);
-            if (snap.exists()) { checkAttendanceStatus(); return; }
+            if (snap.exists()) { rememberAttendanceDone(sessionIdAtSend); checkAttendanceStatus(); return; }
           } catch (_) { /* 確認できない場合は再試行可能な状態に戻す */ }
           btn.textContent = "出席 (Attendance) を報告";
           btn.disabled = false;
@@ -372,6 +462,7 @@
       try {
         const snap = await withTimeout(get(ref(db, `attendance/${sessionIdAtSend}/${currentUser.uid}`)), 8000);
         if (snap.exists()) {
+          rememberAttendanceDone(sessionIdAtSend);
           checkAttendanceStatus();
           alert("出席は既に記録されています。ご安心ください。");
           return;
@@ -397,9 +488,11 @@
       // 一旦すべての色をクリア
       document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
       if (snap.exists()) {
-        const st = snap.val().status;
-        const btn = document.getElementById(`rxn-${st}`);
-        if (btn) btn.classList.add(`active-${st}`);
+        const v = snap.val();
+        // 古いラウンドの回答（リセット前のデータや保留書き込みの残骸）は点灯させない
+        if (typeof v.round === 'number' && v.round !== currentRound()) return;
+        const btn = document.getElementById(`rxn-${v.status}`);
+        if (btn) btn.classList.add(`active-${v.status}`);
       }
     });
   }
@@ -426,13 +519,9 @@
 
     // 講義が有効かは、ライブリスナー(monitorSession)が常にキャッシュしている
     // latestActiveSession を同期的に参照して判定する。ネットワーク取得(get)は行わない。
-    // ── 以前はここで get(active_session) を await していたが、電波の悪い環境では
-    //    応答が返らずに固まり、その間 rxnBusy が true のまま戻らないため、理解度
-    //    ボタンが二度と反応しなくなっていた（コメント送信で接続が復帰すると
-    //    固まっていた get が解決し、再び押せるようになる、という症状の正体）。
     const sess = latestActiveSession;
     if (sess) {
-      const stillActive = !!(sess.id === currentSessionId && sess.isOpen && sess.expiresAt > Date.now());
+      const stillActive = !!(sess.id === currentSessionId && sess.isOpen && sess.expiresAt > serverNow());
       if (!stillActive) {
         showToast("講義時間外のため記録できませんでした。");
         rxnBusy = false;
@@ -441,30 +530,67 @@
     }
     // sess が未取得(null)の場合は判定を保留し、書き込みを試みてサーバのルールに委ねる。
 
+    // 送信時点のラウンド番号を回答に含める。教員のリセット後に届いた古い回答は
+    // サーバー側のルール（round の一致検証）で拒否されるため、前のラウンドの
+    // 回答が新しいラウンドに「復活」する問題が起きない。
+    const roundAtSend = currentRound();
+    const label = { good: '👍 順調', hard: '😓 難しい', wait: '✋ 待って' }[status] || status;
+
     // 楽観的に即フィードバック（成功を前提に色を反映）
     document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
     if (!isCancel) btn.classList.add(`active-${status}`);
     btn.classList.add('pending');
+    setRxnStatus("📡 送信中...", "#888");
+
+    // サーバーが受け取ったことを確認できた時点で呼ぶ（学生への明示的な送信確認）
+    const markConfirmed = () => {
+      btn.classList.remove('pending');
+      if (roundAtSend !== currentRound()) return; // 確認時には次のラウンドが始まっていた：UIはラウンド側が初期化済み
+      if (isCancel) {
+        setRxnStatus("回答を取り消しました", "#888");
+        showToast("回答を取り消しました。");
+      } else {
+        const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+        setRxnStatus(`✓ 「${label}」を記録しました（${t}）`, "#34a853");
+        showToast(`「${label}」を記録しました。`);
+      }
+    };
+
+    // サーバーに拒否されたことが確定した時点で呼ぶ
+    const markFailed = () => {
+      btn.classList.remove('pending');
+      if (roundAtSend !== currentRound()) return; // 古いラウンドの回答が無効になっただけ：新ラウンドのUIには触れない
+      document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
+      setRxnStatus("❌ 記録できませんでした。もう一度押してください。", "#d93025");
+      showToast("記録できませんでした。もう一度押してください。");
+    };
 
     try {
       const writePromise = isCancel
         ? remove(rxnRef)
-        : set(rxnRef, { status: status, timestamp: Date.now() });
+        : set(rxnRef, { status: status, timestamp: serverNow(), round: roundAtSend });
       writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
 
       // 電波が悪いと set/remove の応答が長時間返らないことがある。その間ずっと
       // 待ち続けると rxnBusy が戻らずボタンが固まるため、一定時間で待機を打ち切る。
       // Firebase は接続が復帰した時点で保留中の書き込みを自動的に再送するので、
-      // ここで待機を諦めてもデータは失われず、最終的な状態は onValue が反映する。
+      // ここで待機を諦めてもデータは失われない。
       await withTimeout(writePromise, 8000);
-      // 成功時は onValue 側が正しい状態に整えるので、ここでは pending を外すだけ
+      markConfirmed();
     } catch (e) {
-      console.error(e);
-      // 失敗・タイムアウト時は楽観的更新を取り消し、再試行を促す
-      document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
-      showToast("通信が不安定です。反映されたか確認し、もう一度押してください。");
+      if (e && e.isTimeout) {
+        // 書き込みはキュー済み。出席・質問と同じ「送信待ち」パターンに統一：
+        // 色は維持したまま待ち、最終結果（サーバー確認 or 拒否）で表示を確定する。
+        // （旧実装はタイムアウトで色を消して「もう一度押して」と案内したが、キュー済みの
+        //   書き込みが後で成功して勝手に色が点く、という矛盾した挙動だった。）
+        setRxnStatus("📡 送信待ち（電波の回復後に自動的に記録されます）", "#888");
+        showToast("電波が弱いため送信待ちです。回復すると自動的に記録されます。");
+        writePromise.then(markConfirmed).catch(markFailed);
+      } else {
+        console.error(e);
+        markFailed();
+      }
     } finally {
-      btn.classList.remove('pending');
       rxnBusy = false;
     }
   }
@@ -516,7 +642,7 @@
         studentId: sid || "未入力",
         name: sname || "名前なし",
         body: bodyText,
-        timestamp: Date.now(),
+        timestamp: serverNow(),
         read: false
       });
       writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
