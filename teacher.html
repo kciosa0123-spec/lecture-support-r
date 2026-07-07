@@ -228,6 +228,8 @@
 
   let activeSessionListener = null;
   let activeSessionRef = null;
+  let expiryFinalizeBusy = false;
+  let dashboardExpiryWatcherStarted = false;
 
   // 端末の時計のズレを補正するためのサーバー時刻オフセット。
   // startedAt はルール側で「サーバー時刻±60秒」と検証されるため、教員PCの時計が
@@ -237,6 +239,61 @@
     serverTimeOffset = snap.val() || 0;
   });
   function serverNow() { return Date.now() + serverTimeOffset; }
+
+  // サーバー応答待ちを一定時間で打ち切る共通ヘルパー。
+  // オフライン時に get() が戻らず、期限切れ自動終了の busy フラグが
+  // true のまま残ることを防ぐ。
+  function withTimeout(promise, ms) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => {
+        const err = new Error('timeout');
+        err.isTimeout = true;
+        reject(err);
+      }, ms))
+    ]);
+  }
+
+  // ダッシュボード側の期限切れ自動終了。
+  // active_session の onValue は「DBの値が変わった時」にしか発火しないため、
+  // 講義終了ボタンを押し忘れて期限だけが過ぎた場合に備え、30秒ごとの監視からも呼ぶ。
+  async function finalizeExpiredActiveSession() {
+    if (expiryFinalizeBusy) return;
+    const cached = currentActiveSession;
+    if (!cached || !cached.id || !cached.expiresAt || serverNow() <= cached.expiresAt) return;
+
+    expiryFinalizeBusy = true;
+    try {
+      // 実行直前に active_session を読み直し、古いキャッシュで別講義を終了しないようにする。
+      const snap = await withTimeout(get(ref(db, 'active_session')), 8000);
+      const latest = snap.val();
+      if (!latest || latest.id !== cached.id) return;
+      if (!latest.expiresAt || serverNow() <= latest.expiresAt) return;
+
+      const targetId = latest.id;
+      if (viewingSessionId === targetId) {
+        await logCurrentReactionRound(targetId);
+        await remove(ref(db, `reactions/${targetId}`));
+      } else {
+        await finalizeOtherSession(targetId);
+      }
+      await remove(ref(db, 'active_session'));
+    } catch (e) {
+      console.warn("期限切れ講義の自動終了に失敗:", e);
+    } finally {
+      expiryFinalizeBusy = false;
+    }
+  }
+
+  function startDashboardExpiryWatcher() {
+    if (dashboardExpiryWatcherStarted) return;
+    dashboardExpiryWatcherStarted = true;
+    setInterval(finalizeExpiredActiveSession, 30 * 1000);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') finalizeExpiredActiveSession();
+  });
 
   function detachListeners() {
     if (attListenerRef && attListener) { off(attListenerRef, attListener); attListener = null; attListenerRef = null; }
@@ -488,13 +545,7 @@
         const val = snap.val();
         currentActiveSession = val || null;
         if (val && val.expiresAt && serverNow() > val.expiresAt) {
-          // 期限切れの自動終了：表示中のセッションなら最後のラウンドを記録し、
-          // 個人別の回答が残らないようリアクションを消去してから終了する
-          if (viewingSessionId === val.id) {
-            await logCurrentReactionRound(viewingSessionId);
-            await remove(ref(db, `reactions/${viewingSessionId}`));
-          }
-          await remove(ref(db, 'active_session'));
+          await finalizeExpiredActiveSession();
           return;
         }
         activeSessionId = (val && val.isOpen) ? val.id : "";
@@ -504,6 +555,7 @@
         // round の変化（リセット）でも集計を更新する
         updateReactionSummary();
       });
+      startDashboardExpiryWatcher();
     } else {
       alert("教員アカウントではありません。");
       signOut(auth);
@@ -520,7 +572,7 @@
     return tr;
   }
 
-  function buildQuestionCard(key, q) {
+  function buildQuestionCard(sessionId, key, q) {
     const content = q.body || q.text || "(内容なし)";
     const isRead = (q.read !== undefined) ? q.read : (q.answered || false);
 
@@ -539,7 +591,9 @@
     const toggleBtn = document.createElement('button');
     toggleBtn.className = `q-toggle ${isRead ? 'read' : 'unread'}`;
     toggleBtn.textContent = isRead ? '済' : '未';
-    toggleBtn.onclick = () => update(ref(db, `questions/${viewingSessionId}/${key}`), { read: !isRead });
+    // クリック時のグローバル viewingSessionId ではなく、カード生成時の sessionId に固定する。
+    // セッション切り替え直後に旧カードを押しても、新セッション側へ read だけのゴミノードを作らない。
+    toggleBtn.onclick = () => update(ref(db, `questions/${sessionId}/${key}`), { read: !isRead });
     header.appendChild(toggleBtn);
 
     const body = document.createElement('div');
@@ -635,6 +689,15 @@
     const attBody = document.getElementById('att-list-body');
     const qCont = document.getElementById('questions-container');
 
+    // 新しいリスナーの初回データが届くまで旧セッションの表示を残さない。
+    attBody.replaceChildren();
+    qCont.replaceChildren();
+    currentAttData = {};
+    currentAttCount = 0;
+    rawRxnData = {};
+    document.getElementById('att-count').textContent = "0";
+    updateReactionSummary();
+
     document.getElementById('reaction-panel').classList.remove('hidden');
 
     attListenerRef = ref(db, `attendance/${sessionId}`);
@@ -672,7 +735,7 @@
         qCont.appendChild(empty);
         return;
       }
-      keys.forEach(key => qCont.appendChild(buildQuestionCard(key, data[key])));
+      keys.forEach(key => qCont.appendChild(buildQuestionCard(sessionId, key, data[key])));
     });
   }
 
@@ -849,10 +912,16 @@
       okLabel: "終了する",
       okClass: "btn-danger",
       onOk: async () => {
-        // 最後のラウンドを記録し、個人別の回答が残らないようリアクションを消去してから終了する
-        if (viewingSessionId && viewingSessionId === activeSessionId) {
-          await logCurrentReactionRound(viewingSessionId);
-          await remove(ref(db, `reactions/${viewingSessionId}`));
+        // 最後のラウンドを記録し、個人別の回答が残らないようリアクションを消去してから終了する。
+        // 過去回など、進行中とは別のセッションを表示中でも activeSessionId 側を後始末する。
+        const targetId = activeSessionId;
+        if (targetId) {
+          if (viewingSessionId === targetId) {
+            await logCurrentReactionRound(targetId);
+            await remove(ref(db, `reactions/${targetId}`));
+          } else {
+            await finalizeOtherSession(targetId);
+          }
         }
         await remove(ref(db, 'active_session'));
         location.reload();
