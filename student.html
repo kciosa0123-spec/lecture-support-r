@@ -288,7 +288,11 @@
     const infoEl = document.getElementById('session-info');
     infoEl.textContent = "講義は終了しました。お疲れさまでした。";
     if (endedMessageTimer) clearTimeout(endedMessageTimer);
-    endedMessageTimer = setTimeout(showWaitingMessage, 3000);
+    endedMessageTimer = setTimeout(() => {
+      endedMessageTimer = null;
+      // 終了メッセージ表示中に新しい講義が始まった場合は、待機表示で上書きしない。
+      if (!currentSessionId) showWaitingMessage();
+    }, 3000);
   }
 
   function monitorSession() {
@@ -301,6 +305,24 @@
 
       if (isActive) {
         const sessionChanged = currentSessionId !== val.id;
+
+        // 直前の講義終了メッセージの3秒タイマーが残っている状態で
+        // 新しい講義が始まった場合、講義中表示を待機表示で上書きしないよう止める。
+        if (endedMessageTimer) {
+          clearTimeout(endedMessageTimer);
+          endedMessageTimer = null;
+        }
+
+        // 講義A→講義Bへ直接切り替わった場合、旧講義の自分の質問一覧や
+        // 既読監視リスナーが新講義の下に残らないよう、切り替え時に掃除する。
+        if (sessionChanged) {
+          detachQuestionListeners();
+          document.getElementById('my-questions-container').classList.add('hidden');
+          document.getElementById('my-questions-list').replaceChildren();
+          resetRxnUI();
+          lastSeenRound = null;
+        }
+
         currentSessionId = val.id;
         document.getElementById('session-info').textContent = "講義中：" + (val.title || "（タイトル未設定）");
         areaEl.classList.remove('hidden');
@@ -313,7 +335,6 @@
         // active_session は既存のライブリスナーで確実に届くため、この値の変化を
         // 起点に全端末のボタンを初期化し、学生にトーストで知らせる。
         const round = (typeof val.round === 'number') ? val.round : 1;
-        if (sessionChanged) lastSeenRound = null;
         if (lastSeenRound === null) {
           // 初回観測（ページを開いた直後など）は静かに記憶するだけ
           lastSeenRound = round;
@@ -330,8 +351,11 @@
           checkAttendanceStatus();
         }
       } else {
+        // handleSessionEnd() は wasInLecture を false に戻すため、
+        // 呼び出し後に wasInLecture を見ると終了メッセージを即座に上書きしてしまう。
+        const hadLecture = wasInLecture;
         handleSessionEnd();
-        if (!wasInLecture) showWaitingMessage();
+        if (!hadLecture) showWaitingMessage();
       }
     });
   }
@@ -508,10 +532,12 @@
   }
 
   let rxnBusy = false; // 連打による競合を防ぐ
+  let rxnOpSeq = 0;    // 送信待ち中に次の操作が入った場合、古い確認表示で上書きしないための世代番号
   async function handleRxn(status) {
     if (!currentSessionId || !currentUser) return;
     if (rxnBusy) return;
     rxnBusy = true;
+    const opSeq = ++rxnOpSeq;
 
     const btn = document.getElementById(`rxn-${status}`);
     const rxnRef = ref(db, `reactions/${currentSessionId}/${currentUser.uid}`);
@@ -537,13 +563,15 @@
     const label = { good: '👍 順調', hard: '😓 難しい', wait: '✋ 待って' }[status] || status;
 
     // 楽観的に即フィードバック（成功を前提に色を反映）
-    document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
+    // 以前の送信待ちが残っていても、新しい操作を最後の表示として扱う。
+    document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait', 'pending'));
     if (!isCancel) btn.classList.add(`active-${status}`);
     btn.classList.add('pending');
     setRxnStatus("📡 送信中...", "#888");
 
     // サーバーが受け取ったことを確認できた時点で呼ぶ（学生への明示的な送信確認）
     const markConfirmed = () => {
+      if (opSeq !== rxnOpSeq) return; // 後続操作がすでにある場合、古い結果で表示を上書きしない
       btn.classList.remove('pending');
       if (roundAtSend !== currentRound()) return; // 確認時には次のラウンドが始まっていた：UIはラウンド側が初期化済み
       if (isCancel) {
@@ -558,6 +586,7 @@
 
     // サーバーに拒否されたことが確定した時点で呼ぶ
     const markFailed = () => {
+      if (opSeq !== rxnOpSeq) return; // 後続操作がすでにある場合、古い結果で表示を上書きしない
       btn.classList.remove('pending');
       if (roundAtSend !== currentRound()) return; // 古いラウンドの回答が無効になっただけ：新ラウンドのUIには触れない
       document.querySelectorAll('.rxn-btn').forEach(b => b.classList.remove('active-good', 'active-hard', 'active-wait'));
