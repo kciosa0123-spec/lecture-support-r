@@ -56,6 +56,20 @@
     .stat-box { flex: 1; padding: 6px; background: white; border-radius: 6px; border: 1px solid #ddd; text-align: center; }
     .stat-box.clickable { cursor: pointer; transition: 0.2s; position: relative; }
     .stat-box.clickable:hover { background: #e9ecef; border-color: #adb5bd; transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+
+    /* ＝＝＝ 学期切替・過去データ閲覧モード用CSS ＝＝＝ */
+    #semester-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; }
+    .semester-btn { background: #fff; color: #555; border: 1px solid #bbb; padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .semester-btn:hover { border-color: #4285f4; }
+    .semester-btn.active { background: #4285f4; color: #fff; border-color: #4285f4; }
+    #past-mode-banner { background: #616161; color: #fff; padding: 12px; border-radius: 8px; font-weight: bold; text-align: center; font-size: 13px; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    body.past-mode { background: #e2e2e2; }
+    body.past-mode .box { background: #f1f1f1; }
+    body.past-mode .semester-btn.active { background: #616161; border-color: #616161; }
+    /* 過去学期では書き込み系の操作を画面から取り除く（JS側の assertWritableSemester と二重ガード） */
+    body.past-mode #start-actions,
+    body.past-mode #delete-btn,
+    body.past-mode #reset-rxn-btn { display: none !important; }
   </style>
 </head>
 <body>
@@ -71,6 +85,10 @@
   </div>
 
   <div id="dashboard-section" class="hidden">
+    <div class="box" id="semester-bar">
+      <div id="semester-switcher" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"></div>
+    </div>
+    <div id="past-mode-banner" class="hidden"></div>
     <button id="timetable-toggle-btn" type="button">📅 時間割選択エリアを隠す</button>
     <div id="timetable-wrapper">
       <div class="box search-area">
@@ -87,11 +105,7 @@
         </div>
       </div>
 
-      <div class="timetable-grid">
-        <div class="day-column"><div class="day-title">月曜日</div><div id="subjects-mon"></div></div>
-        <div class="day-column"><div class="day-title">火曜日</div><div id="subjects-tue"></div></div>
-        <div class="day-column"><div class="day-title">金曜日</div><div id="subjects-fri"></div></div>
-      </div>
+      <div class="timetable-grid" id="timetable-grid"></div>
     </div>
 
     <div class="box" id="active-panel" style="border-top: 5px solid #4285f4; padding: 10px;">
@@ -197,11 +211,46 @@
 
   const TEACHER_EMAIL = "osada@mail.ryukoku.ac.jp";
   const LECTURE_DURATION_MS = 110 * 60 * 1000;
-  const timetable = {
-    mon: { 2: "英語総合3(B)", 3: "英語総合 ３", 4: "英語総合１(A)" },
-    tue: { 1: "英語総合１(A)", 2: "英語総合１(A)", 4: "英語総合１(A)" },
-    fri: { 1: "英語総合１(B)", 2: "英語総合１(B)", 3: "英語総合 ３", 4: "英語総合 ３" }
+  // ＝＝＝ 学期別設定 ＝＝＝
+  // 新しい学期はここに追加し、CURRENT_SEMESTER を差し替えるだけでよい。
+  // キーは "YYYYH1"（前期）/ "YYYYH2"（後期）形式。表示はキーの降順（新しい学期が先）。
+  const semesterConfigs = {
+    "2026H1": {
+      label: "2026年度前期",
+      period: { from: "20260401", to: "20260831" }, // この学期のセッションIDの日付範囲
+      timetable: {
+        mon: { 2: "英語総合3(B)", 3: "英語総合 ３", 4: "英語総合１(A)" },
+        tue: { 1: "英語総合１(A)", 2: "英語総合１(A)", 4: "英語総合１(A)" },
+        fri: { 1: "英語総合１(B)", 2: "英語総合１(B)", 3: "英語総合 ３", 4: "英語総合 ３" }
+      }
+    },
+    "2026H2": {
+      label: "2026年度後期",
+      period: { from: "20260901", to: "20270331" }, // この学期のセッションIDの日付範囲
+      timetable: {
+        mon: { 2: "英語総合4(B)", 3: "英語総合４", 4: "英語総合２(A)" },
+        tue: { 1: "英語総合２(A)", 2: "英語総合２(A)", 4: "英語総合２(A)" },
+        fri: { 1: "英語総合２(B)", 2: "英語総合２(B)", 3: "英語総合４", 4: "英語総合４" }
+      }
+    }
   };
+  const CURRENT_SEMESTER = "2026H2"; // 通常起動時は必ずこの学期が表示される
+  let selectedSemester = CURRENT_SEMESTER;
+  const DAY_NAMES = { mon: "月", tue: "火", wed: "水", thu: "木", fri: "金" };
+
+  function isPastView() { return selectedSemester !== CURRENT_SEMESTER; }
+
+  // 書き込み系処理の直前に呼ぶ。UI側の無効化が何かの拍子に外れても、
+  // 過去学期への書き込みをここで確実に止める（二重ガード）。
+  function assertWritableSemester() {
+    if (isPastView()) {
+      alert("過去学期は閲覧専用です。データは変更できません。");
+      const err = new Error("過去学期は閲覧専用です");
+      err.isReadOnlyGuard = true;
+      throw err;
+    }
+  }
+
 
   let viewingSessionId = "";
   let activeSessionId = "";
@@ -332,6 +381,7 @@
       try {
         await handler();
       } catch (e) {
+        if (e && e.isReadOnlyGuard) return; // 閲覧専用ガード：通知済みなので何もしない
         console.error(e);
         alert("処理に失敗しました。通信環境を確認してください。");
       }
@@ -367,31 +417,116 @@
     }
   });
 
-  Object.keys(timetable).forEach(day => {
-    const container = document.getElementById(`subjects-${day}`);
-    for (let p = 1; p <= 4; p++) {
-      const slot = document.createElement('div');
-      slot.className = 'period-slot';
-      const label = document.createElement('div'); label.className = 'period-label'; label.textContent = `${p}限`;
-      slot.appendChild(label);
-      if (timetable[day][p]) {
-        const sub = timetable[day][p];
-        const btn = document.createElement('button'); btn.className = 'subject-btn'; btn.textContent = sub;
-        btn.onclick = () => window.toggleSubject(btn, day, sub, p);
-        const grid = document.createElement('div'); grid.className = 'session-grid-mini'; grid.id = `grid-${day}-${p}`;
-        for (let i = 1; i <= 15; i++) {
-          const b = document.createElement('button'); b.className = 'session-btn'; b.textContent = i; b.id = `btn-${day}-${p}-${i}`;
-          b.onclick = (e) => { e.stopPropagation(); window.loadSession(day, sub, p, i); };
-          grid.appendChild(b);
+  // ＝＝＝ 学期切替（過去学期＝完全閲覧専用モード） ＝＝＝
+  // 学期タブを描画する。semesterConfigs のキー（YYYYH1/YYYYH2 形式）を
+  // 文字列降順に並べ、新しい学期が左に来るようにする。
+  function renderSemesterSwitcher() {
+    const cont = document.getElementById('semester-switcher');
+    cont.replaceChildren();
+    const lbl = document.createElement('span');
+    lbl.textContent = "表示学期：";
+    lbl.style.cssText = "font-size: 12px; font-weight: bold; color: #555;";
+    cont.appendChild(lbl);
+    Object.keys(semesterConfigs).sort().reverse().forEach(key => {
+      const b = document.createElement('button');
+      b.type = "button";
+      b.className = "semester-btn";
+      b.dataset.semester = key;
+      b.textContent = semesterConfigs[key].label + (key === CURRENT_SEMESTER ? "（現在）" : "");
+      b.onclick = () => switchSemester(key);
+      cont.appendChild(b);
+    });
+  }
+
+  // 選択中の学期の時間割から曜日カラムとコマを動的に構築する。
+  // 学期ごとに曜日構成が変わっても（次年度など）そのまま対応できる。
+  function buildTimetableGrid() {
+    const gridRoot = document.getElementById('timetable-grid');
+    gridRoot.replaceChildren();
+    const tt = semesterConfigs[selectedSemester].timetable;
+    Object.keys(tt).forEach(day => {
+      const col = document.createElement('div');
+      col.className = 'day-column';
+      const title = document.createElement('div');
+      title.className = 'day-title';
+      title.textContent = `${DAY_NAMES[day]}曜日`;
+      col.appendChild(title);
+      for (let p = 1; p <= 4; p++) {
+        const slot = document.createElement('div');
+        slot.className = 'period-slot';
+        const label = document.createElement('div'); label.className = 'period-label'; label.textContent = `${p}限`;
+        slot.appendChild(label);
+        if (tt[day][p]) {
+          const sub = tt[day][p];
+          const btn = document.createElement('button'); btn.className = 'subject-btn'; btn.textContent = sub;
+          btn.onclick = () => window.toggleSubject(btn, day, sub, p);
+          const grid = document.createElement('div'); grid.className = 'session-grid-mini'; grid.id = `grid-${day}-${p}`;
+          for (let i = 1; i <= 15; i++) {
+            const b = document.createElement('button'); b.className = 'session-btn'; b.textContent = i; b.id = `btn-${day}-${p}-${i}`;
+            b.onclick = (e) => { e.stopPropagation(); window.loadSession(day, sub, p, i); };
+            grid.appendChild(b);
+          }
+          slot.appendChild(btn); slot.appendChild(grid);
+        } else {
+          const empty = document.createElement('div'); empty.className = 'empty-slot'; empty.textContent = "-";
+          slot.appendChild(empty);
         }
-        slot.appendChild(btn); slot.appendChild(grid);
-      } else {
-        const empty = document.createElement('div'); empty.className = 'empty-slot'; empty.textContent = "-";
-        slot.appendChild(empty);
+        col.appendChild(slot);
       }
-      container.appendChild(slot);
+      gridRoot.appendChild(col);
+    });
+  }
+
+  // 閲覧専用モードの見た目と操作可否を画面に反映する。
+  // 書き込み系ボタンの非表示は body.past-mode の CSS が担う。
+  function applySemesterModeUI() {
+    const past = isPastView();
+    document.body.classList.toggle('past-mode', past);
+    const banner = document.getElementById('past-mode-banner');
+    if (past) {
+      banner.textContent = `📚 ${semesterConfigs[selectedSemester].label} ― 過去データ閲覧モード（この画面ではデータを変更できません）`;
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
     }
-  });
+    // 現在学期に戻ったとき、進行中講義があれば終了ボタンの表示を復元する
+    document.getElementById('end-lecture-btn').classList.toggle('hidden', past || !activeSessionId);
+    document.querySelectorAll('.semester-btn').forEach(b => b.classList.toggle('active', b.dataset.semester === selectedSemester));
+  }
+
+  function switchSemester(key) {
+    if (!semesterConfigs[key] || key === selectedSemester) return;
+    selectedSemester = key;
+
+    // 表示中セッションのリスナーを解除し、選択状態を初期化する
+    detachListeners();
+    viewingSessionId = "";
+    document.getElementById('current-display-label').textContent = "科目を選択してください";
+    document.getElementById('data-actions').classList.add('hidden');
+    document.getElementById('reaction-panel').classList.add('hidden');
+    document.getElementById('att-count').textContent = "0";
+    document.getElementById('att-list-body').replaceChildren();
+    document.getElementById('questions-container').replaceChildren();
+    document.getElementById('search-results-area').classList.add('hidden');
+    const startBtn = document.getElementById('start-lecture-btn');
+    startBtn.textContent = "講義開始";
+    startBtn.className = "btn-warning";
+    updateStartButtonState();
+    updateRoundLabel();
+
+    buildTimetableGrid();
+    applySemesterModeUI();
+
+    // 学期を切り替えたら時間割エリアを開き、すぐ回を選べるようにする
+    wrapper.style.display = 'block';
+    toggleBtn.textContent = '📅 時間割選択エリアを隠す';
+    toggleBtn.style.background = '#6c757d';
+  }
+
+  renderSemesterSwitcher();
+  buildTimetableGrid();
+  applySemesterModeUI();
+  // ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 
   window.toggleSubject = (btn, day, sub, p) => {
     const targetGrid = document.getElementById(`grid-${day}-${p}`);
@@ -413,13 +548,18 @@
       const keys = await res.json();
       if (!keys) return;
 
-      const dayName = { mon: "月", tue: "火", fri: "金" }[day];
+      // 選択中学期の日付範囲（範囲外＝他学期・他年度のセッションは対象外にする）
+      const range = semesterConfigs[selectedSemester].period;
+      const dayName = DAY_NAMES[day];
       for (let i = 1; i <= 15; i++) {
         const btn = document.getElementById(`btn-${day}-${p}-${i}`);
         if (btn.dataset.actualId) continue;
-        const found = Object.keys(keys).find(id =>
-          id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`)
-        );
+        const found = Object.keys(keys).find(id => {
+          // 次年度に同じ曜限・同じ科目名が再登場しても、日付範囲で学期を区別する
+          const dm = id.match(/^(\d{8})_/);
+          if (range && dm && (dm[1] < range.from || dm[1] > range.to)) return false;
+          return id.includes(`${dayName}${p}`) && id.includes(sub) && id.includes(`第${i}回`);
+        });
         if (found) { btn.classList.add('has-data'); btn.dataset.actualId = found; }
       }
     } catch (e) {
@@ -487,7 +627,7 @@
 
   window.loadSession = (day, sub, p, num) => {
     const btn = document.getElementById(`btn-${day}-${p}-${num}`);
-    const dayName = { mon: "月", tue: "火", fri: "金" }[day];
+    const dayName = DAY_NAMES[day];
     const now = new Date();
     // ローカル（日本時間）の日付で組み立てる。
     // 旧実装の toISOString() はUTC日付を返すため、日本時間の朝9時より前に
@@ -593,7 +733,15 @@
     toggleBtn.textContent = isRead ? '済' : '未';
     // クリック時のグローバル viewingSessionId ではなく、カード生成時の sessionId に固定する。
     // セッション切り替え直後に旧カードを押しても、新セッション側へ read だけのゴミノードを作らない。
-    toggleBtn.onclick = () => update(ref(db, `questions/${sessionId}/${key}`), { read: !isRead });
+    if (isPastView()) {
+      // 過去データ閲覧モードでは既読状態を変更させない
+      toggleBtn.disabled = true;
+      toggleBtn.style.opacity = "0.5";
+      toggleBtn.style.cursor = "not-allowed";
+      toggleBtn.title = "過去データ閲覧モードでは変更できません";
+    } else {
+      toggleBtn.onclick = () => { assertWritableSemester(); update(ref(db, `questions/${sessionId}/${key}`), { read: !isRead }); };
+    }
     header.appendChild(toggleBtn);
 
     const body = document.createElement('div');
@@ -788,6 +936,7 @@
       okLabel: "記録してリセット",
       okClass: "btn-danger",
       onOk: async () => {
+        assertWritableSemester();
         if (!viewingSessionId) return;
         await logCurrentReactionRound(viewingSessionId);
         if (viewingSessionId === activeSessionId && currentActiveSession) {
@@ -864,12 +1013,14 @@
 
   document.getElementById('start-lecture-btn').onclick = async () => {
     if (!viewingSessionId) return alert("回を選択してください。");
+    if (isPastView()) return alert("過去学期は閲覧専用です。データは変更できません。");
     const title = document.getElementById('current-display-label').textContent;
     if (!title || title === "科目を選択してください") {
       return alert("回を選択してから開始してください。");
     }
 
     const doStart = async () => {
+      assertWritableSemester();
       // 別の講義が進行中だった場合は、その最終ラウンドを記録し、
       // リアクションを消去してから切り替える（終了処理と同等の後始末）
       if (activeSessionId && activeSessionId !== viewingSessionId) {
@@ -912,6 +1063,7 @@
       okLabel: "終了する",
       okClass: "btn-danger",
       onOk: async () => {
+        assertWritableSemester();
         // 最後のラウンドを記録し、個人別の回答が残らないようリアクションを消去してから終了する。
         // 過去回など、進行中とは別のセッションを表示中でも activeSessionId 側を後始末する。
         const targetId = activeSessionId;
@@ -1010,6 +1162,7 @@
       okLabel: "削除する",
       okClass: "btn-danger",
       onOk: async () => {
+        assertWritableSemester();
         detachListeners();
         await Promise.all([
           remove(ref(db, `attendance/${targetId}`)),
