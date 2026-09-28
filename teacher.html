@@ -323,6 +323,7 @@
       if (viewingSessionId === targetId) {
         // 記録・リアクション消去・講義終了を1回の書き込みで行う
         await logAndClearViewingSession(targetId, { 'active_session': null });
+        clearRoundStats(targetId);
       } else {
         await finalizeOtherSession(targetId);
         await remove(ref(db, 'active_session'));
@@ -758,6 +759,7 @@
   function updateReactionSummary() {
     const round = currentRoundForViewing();
     const { good, hard, wait } = summarizeReactions(currentAttData, rawRxnData, round);
+    trackWaitPeak(round, wait);
 
     const total = currentAttCount;
     const reacted = good + hard + wait;
@@ -779,6 +781,91 @@
     }
   }
 
+  // ＝＝＝ ラウンドごとの追跡データ（開始時刻・「待って」の最大人数） ＝＝＝
+  // 教員の端末内（localStorage）に保存するので、iPad のスリープや再読み込みでも失われない。
+  // 講義終了を押し忘れて後から期限切れ処理が走った場合も、同じ端末ならこの値を記録に含められる。
+  // 保存するのは人数と時刻だけで、誰が押したかは保存しない。
+  const ROUND_STATS_STORE = 'ryu_round_stats';
+
+  function loadRoundStats() {
+    try {
+      const v = JSON.parse(localStorage.getItem(ROUND_STATS_STORE) || 'null');
+      return (v && typeof v === 'object') ? v : null;
+    } catch (_) { return null; }
+  }
+  function saveRoundStats(s) {
+    try {
+      if (s) localStorage.setItem(ROUND_STATS_STORE, JSON.stringify(s));
+      else localStorage.removeItem(ROUND_STATS_STORE);
+    } catch (_) { /* localStorage が使えない環境では追跡しない */ }
+  }
+  function clearRoundStats(sessionId) {
+    const s = loadRoundStats();
+    if (s && s.sessionId === sessionId) saveRoundStats(null);
+  }
+
+  // 現在のラウンドの追跡データを返す（無ければ作る）。
+  // 開始時刻が確実に分かるのは「第1ラウンド＝講義開始時刻」と「このダッシュボードでリセットした時刻」だけ。
+  // それ以外（途中で開いた場合など）は null のままにし、推測した値は書かない。
+  function ensureRoundStats(sessionId, round) {
+    let s = loadRoundStats();
+    if (!s || s.sessionId !== sessionId || s.round !== round) {
+      const firstStart = (round === 1 && currentActiveSession && currentActiveSession.id === sessionId
+        && typeof currentActiveSession.startedAt === 'number') ? currentActiveSession.startedAt : null;
+      s = { sessionId, round, startedAt: firstStart, trackedFrom: serverNow(), waitPeak: 0, waitPeakAt: null };
+      saveRoundStats(s);
+    }
+    return s;
+  }
+
+  // リセット直後に呼ぶ：新しいラウンドの開始時刻を確定させる
+  function startNewRoundStats(sessionId, round, startedAt) {
+    const s = ensureRoundStats(sessionId, round);
+    s.startedAt = startedAt;
+    saveRoundStats(s);
+  }
+
+  // 集計が更新されるたびに呼ぶ：「待って」の最大人数とその時刻を更新する。
+  // 失敗してもリアルタイム表示を止めないよう、例外はここで握りつぶす。
+  function trackWaitPeak(round, wait) {
+    try {
+      if (round == null || !viewingSessionId) return;
+      const s = ensureRoundStats(viewingSessionId, round);
+      if (wait > (s.waitPeak || 0)) {
+        s.waitPeak = wait;
+        s.waitPeakAt = serverNow();
+        saveRoundStats(s);
+      }
+    } catch (e) {
+      console.warn("「待って」の追跡に失敗:", e);
+    }
+  }
+
+  // ラウンド記録に、ラウンド番号・開始時刻・「待って」の最大人数を付け加える。
+  // 追跡データが無い・一致しない場合は付け加えない（過去の記録と同じ形のまま）。
+  function attachRoundStats(entry, sessionId, round, currentWait) {
+    try {
+      const s = loadRoundStats();
+      const matched = !!(s && s.sessionId === sessionId && (round == null || s.round === round));
+      const r = (round != null) ? round : (matched ? s.round : null);
+      if (typeof r === 'number') entry.round = r;
+      if (currentActiveSession && currentActiveSession.id === sessionId && typeof currentActiveSession.startedAt === 'number') {
+        entry.sessionStartedAt = currentActiveSession.startedAt;
+      }
+      if (!matched) return;
+      if (typeof s.startedAt === 'number') entry.roundStartedAt = s.startedAt;
+      if (typeof s.trackedFrom === 'number') entry.trackedFrom = s.trackedFrom;
+      let peak = s.waitPeak || 0;
+      let peakAt = s.waitPeakAt;
+      if (currentWait > peak) { peak = currentWait; peakAt = serverNow(); }
+      entry.waitPeak = peak;
+      if (typeof peakAt === 'number') entry.waitPeakAt = peakAt;
+    } catch (e) {
+      console.warn("ラウンド追跡データの付加に失敗:", e);
+    }
+  }
+  // ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+
   // 現在の集計を「1ラウンド」分の記録データとして組み立てる。
   // 記録するのは人数（割合のもとになる値）と未回答者の一覧のみで、
   // 誰がどのボタンを押したか（個人別の回答内容）は記録しない。
@@ -788,7 +875,7 @@
     const round = currentRoundForViewing();
     const { good, hard, wait, unanswered } = summarizeReactions(currentAttData, rawRxnData, round);
     if (good + hard + wait === 0) return null;
-    return {
+    const entry = {
       timestamp: serverNow(),
       attendance: currentAttCount,
       good: good,
@@ -797,6 +884,8 @@
       unansweredCount: unanswered.length,
       unanswered: unanswered
     };
+    attachRoundStats(entry, sessionId, round, wait);
+    return entry;
   }
 
   // 表示中セッションの「ラウンド記録」と「リアクション消去」を1回の書き込みにまとめる。
@@ -836,7 +925,7 @@
         const { good, hard, wait, unanswered } = summarizeReactions(attData, rxnData, null);
         if (good + hard + wait > 0) {
           const logKey = push(ref(db, `reaction_logs/${sessionId}`)).key;
-          updates[`reaction_logs/${sessionId}/${logKey}`] = {
+          const entry = {
             timestamp: serverNow(),
             attendance: total,
             good: good,
@@ -845,10 +934,14 @@
             unansweredCount: unanswered.length,
             unanswered: unanswered
           };
+          // 同じ端末で追跡していた場合は、ラウンド番号・開始時刻・「待って」の最大人数も記録する
+          attachRoundStats(entry, sessionId, null, wait);
+          updates[`reaction_logs/${sessionId}/${logKey}`] = entry;
         }
       }
       updates[`reactions/${sessionId}`] = null;
       await update(ref(db), updates);
+      clearRoundStats(sessionId);
     } catch (e) {
       console.warn("旧セッションの後始末に失敗:", e);
     }
@@ -970,7 +1063,10 @@
         }
         // 記録・リアクション消去・round 更新を1回の書き込みで原子的に行う。
         // 進行中の講義でなければ round は触らず、記録と消去だけを行う。
+        const resetAt = serverNow();
         await logAndClearViewingSession(targetId, extra);
+        // 新しいラウンドの開始時刻＝リセットした時刻として記録しておく
+        if (extra['active_session/round']) startNewRoundStats(targetId, extra['active_session/round'], resetAt);
       }
     });
   };
@@ -1047,6 +1143,8 @@
       const keepRound = (activeSessionId === viewingSessionId && currentActiveSession && typeof currentActiveSession.round === 'number')
         ? currentActiveSession.round
         : 1;
+      // 新規開始・再開時は、同じ回の古い追跡データを持ち越さない（時間延長の「更新」では維持する）
+      if (activeSessionId !== viewingSessionId) clearRoundStats(viewingSessionId);
       const now = serverNow();
       await set(ref(db, 'active_session'), {
         id: viewingSessionId,
@@ -1086,6 +1184,7 @@
         if (targetId && viewingSessionId === targetId) {
           // 記録・リアクション消去・講義終了を1回の書き込みで行う
           await logAndClearViewingSession(targetId, { 'active_session': null });
+          clearRoundStats(targetId);
         } else {
           if (targetId) await finalizeOtherSession(targetId);
           await remove(ref(db, 'active_session'));
@@ -1144,7 +1243,7 @@
     // 理解度チェックのラウンドごとの記録（割合と未回答者）を末尾に追加
     if (logs.length > 0) {
       csv += `\n理解度チェックの記録（全${logs.length}ラウンド）\n`;
-      csv += "記録時刻,出席数,順調,難しい,待って,未回答,順調%,難しい%,待って%,未回答%,未回答者\n";
+      csv += "記録時刻,出席数,順調,難しい,待って,未回答,順調%,難しい%,待って%,未回答%,未回答者,ラウンド,ラウンド開始時刻,待って最大人数,待って最大の時刻\n";
       logs.forEach(l => {
         const total = l.attendance || 0;
         const good = l.good || 0, hard = l.hard || 0, wait = l.wait || 0;
@@ -1155,7 +1254,11 @@
           .filter(Boolean)
           .join(" / ");
         const t = l.timestamp ? new Date(l.timestamp).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' }) : "";
-        csv += `${esc(t)},${total},${good},${hard},${wait},${none},${pct(good)},${pct(hard)},${pct(wait)},${pct(none)},${esc(unList)}\n`;
+        // 追加項目（この機能を入れる前の記録には無いので空欄になる）
+        const fmtT = (ms) => (typeof ms === 'number') ? new Date(ms).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' }) : "";
+        const roundNo = (l.round != null) ? l.round : "";
+        const peak = (l.waitPeak != null) ? l.waitPeak : "";
+        csv += `${esc(t)},${total},${good},${hard},${wait},${none},${pct(good)},${pct(hard)},${pct(wait)},${pct(none)},${esc(unList)},${roundNo},${esc(fmtT(l.roundStartedAt))},${peak},${esc(fmtT(l.waitPeakAt))}\n`;
       });
     }
 
