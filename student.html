@@ -142,6 +142,9 @@
   let rxnUnsubscriber = null;
   let rxnMonitorSessionId = null; // 現在リアクションを購読中のセッションID（重複購読防止）
 
+  // このページ内で送信結果を待っている質問のキー（再送処理と二重に走らないようにする）
+  const inFlightQuestionKeys = new Set();
+
   // 端末の時計のズレを補正するためのサーバー時刻オフセット。
   // 期限切れ判定や timestamp の生成に端末の時計を直接使うと、時計のずれた端末で
   // 「講義時間外」と誤判定されたり、ルールの timestamp 検証に弾かれたりするため。
@@ -405,6 +408,7 @@
       setLock(true);
       qSection.classList.remove('hidden');
       startReactionMonitor(); // 出席済みならリアクション監視開始（重複購読は内部で防止）
+      resendPendingQuestions(); // 前回ページを閉じた時点で送信待ちだった質問を再送・復元
     } else {
       btn.textContent = "出席 (Attendance) を報告";
       btn.disabled = false;
@@ -530,6 +534,168 @@
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
   }
+
+  // ＝＝＝ 質問の「送信待ち」を端末内に保持する（ページ再読込・タブ破棄対策） ＝＝＝
+  // Firebase の送信待ちキューはメモリ上にしかないため、送信待ちのままページを閉じたり
+  // スマホがタブを破棄したりすると、質問が本文ごと消えていた。
+  // 送信前に push キーと本文を localStorage に保存し、サーバーの受信確認で消す。
+  // 次にページを開いたとき同じ講義が続いていれば、同じキーで再送する
+  // （同じキーへの上書きなので二重登録にならない。ルールも自分の未読質問の上書きを許可済み）。
+  const PENDING_Q_STORE = 'ryu_pending_questions';
+  const PENDING_Q_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 1日以上前の送信待ちは破棄
+
+  function loadPendingQuestions() {
+    try {
+      const v = JSON.parse(localStorage.getItem(PENDING_Q_STORE) || '[]');
+      return Array.isArray(v) ? v : [];
+    } catch (_) { return []; }
+  }
+  function savePendingQuestions(list) {
+    try {
+      if (list.length) localStorage.setItem(PENDING_Q_STORE, JSON.stringify(list));
+      else localStorage.removeItem(PENDING_Q_STORE);
+    } catch (_) { /* localStorage が使えない環境では保持しない（従来どおりの動作になる） */ }
+  }
+  function addPendingQuestion(entry) {
+    const list = loadPendingQuestions().filter(p => p && p.key !== entry.key);
+    list.push(entry);
+    savePendingQuestions(list);
+  }
+  function removePendingQuestion(key) {
+    savePendingQuestions(loadPendingQuestions().filter(p => p && p.key !== key));
+  }
+
+  function questionPayload(entry) {
+    return {
+      uid: entry.uid,
+      email: entry.email,
+      studentId: entry.studentId,
+      name: entry.name,
+      body: entry.body,
+      timestamp: serverNow(), // 再送時も送信時点の時刻にする（ルールの30分以内チェックのため）
+      read: false
+    };
+  }
+
+  // 「送信したメッセージ」欄にカードを1枚追加し、表示更新用の要素を返す
+  function createQuestionCard(bodyText, statusText) {
+    document.getElementById('my-questions-container').classList.remove('hidden');
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#f8f9fa; border:1px solid #ddd; padding:10px; border-radius:8px; font-size:14px; text-align:left;';
+    const bodyEl = document.createElement('div');
+    bodyEl.textContent = bodyText;
+    card.appendChild(bodyEl);
+    const statusEl = document.createElement('div');
+    statusEl.style.cssText = 'font-size:11px; margin-top:6px; font-weight:bold; color:#888;';
+    statusEl.textContent = statusText;
+    card.appendChild(statusEl);
+    document.getElementById('my-questions-list').prepend(card);
+    return { card, statusEl, delivered: false };
+  }
+
+  // サーバーに届いたことが確認できた時点で呼ぶ（端末内の保存を消し、既読監視を始める）
+  function markQuestionDelivered(entry, qRef, ui) {
+    inFlightQuestionKeys.delete(entry.key);
+    removePendingQuestion(entry.key);
+    if (ui.delivered) return;
+    ui.delivered = true;
+    ui.statusEl.textContent = "⏳ 教員の確認待ち...";
+    ui.statusEl.style.color = "#888";
+    const unsubscribe = onValue(qRef, (snap) => {
+      const data = snap.val();
+      if (data && data.read === true) {
+        ui.statusEl.textContent = "✅ 教員が確認しました";
+        ui.statusEl.style.color = "#34a853";
+        ui.card.style.background = "#e6f4ea";
+        ui.card.style.borderColor = "#c6e1d0";
+        unsubscribe();
+        questionUnsubscribers = questionUnsubscribers.filter(f => f !== unsubscribe);
+      }
+    });
+    questionUnsubscribers.push(unsubscribe);
+  }
+
+  // サーバーに拒否されたときに呼ぶ。教員が既読にした質問への再送はルールで拒否されるため、
+  // 実際には届いているかを確認してから表示を決める。
+  async function settleRejectedQuestion(entry, qRef, ui) {
+    inFlightQuestionKeys.delete(entry.key);
+    try {
+      const snap = await withTimeout(get(qRef), 8000);
+      if (snap.exists()) { markQuestionDelivered(entry, qRef, ui); return; }
+      removePendingQuestion(entry.key);
+    } catch (e) {
+      // 存在しない質問は読み取り権限がないため permission エラーになる＝届いていない。
+      // タイムアウト（確認不能）の場合だけは端末内の保存を残し、次にページを開いたときに扱う。
+      if (!(e && e.isTimeout)) removePendingQuestion(entry.key);
+    }
+    ui.statusEl.textContent = "❌ 送信できませんでした（講義終了後などの理由で届きませんでした）";
+    ui.statusEl.style.color = "#d93025";
+  }
+
+  // 質問を1件書き込み、結果に応じてカード表示と端末内の保存を更新する。
+  // 8秒以内に確定すれば 'delivered'、確定しなければ 'queued'（結果は後から反映）を返す。
+  // サーバーから即座に拒否された場合は例外を投げる。
+  async function writeQuestion(entry, ui) {
+    const qRef = ref(db, `questions/${entry.sessionId}/${entry.key}`);
+    inFlightQuestionKeys.add(entry.key);
+    const writePromise = set(qRef, questionPayload(entry));
+    writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
+    try {
+      await withTimeout(writePromise, 8000);
+      markQuestionDelivered(entry, qRef, ui);
+      return 'delivered';
+    } catch (e) {
+      if (e && e.isTimeout) {
+        // 書き込みはキュー済み。接続回復時に自動送信される。
+        // ページを閉じても端末内に保存してあるため、次に開いたときに再送される。
+        ui.statusEl.textContent = "📡 送信待ち（電波の回復後に自動的に届きます）";
+        writePromise
+          .then(() => markQuestionDelivered(entry, qRef, ui))
+          .catch(() => settleRejectedQuestion(entry, qRef, ui));
+        return 'queued';
+      }
+      inFlightQuestionKeys.delete(entry.key);
+      throw e;
+    }
+  }
+
+  // 前回ページを閉じた時点で送信待ちだった質問を扱う（出席確認後に呼ぶ）。
+  // ・同じ講義が進行中 → 同じキーで再送
+  // ・別の講義が進行中（＝前の講義は終了済みで、もう送れない）→ 本文を入力欄に戻して知らせる
+  function resendPendingQuestions() {
+    if (!currentSessionId || !currentUser) return;
+    const all = loadPendingQuestions();
+    if (!all.length) return;
+
+    const now = Date.now();
+    const keep = [];
+    const resend = [];
+    const stale = [];
+    all.forEach(p => {
+      if (!p || !p.key || !p.body || !p.sessionId) return;        // 壊れたデータは捨てる
+      if (p.uid !== currentUser.uid) { keep.push(p); return; }      // 別アカウント分には触れない
+      if (now - (p.createdAt || 0) > PENDING_Q_MAX_AGE_MS) return;  // 古すぎるものは捨てる
+      if (p.sessionId === currentSessionId) { keep.push(p); resend.push(p); }
+      else stale.push(p);
+    });
+    savePendingQuestions(keep);
+
+    if (stale.length) {
+      const ta = document.getElementById('question-text');
+      const restored = stale.map(p => p.body).join('\n');
+      ta.value = ta.value.trim() ? `${ta.value}\n${restored}` : restored;
+      showToast("前回届かなかったメッセージを入力欄に戻しました。必要なら送信してください。");
+    }
+
+    resend.forEach(p => {
+      if (inFlightQuestionKeys.has(p.key)) return; // このページで送信処理中のものは二重に送らない
+      const ui = createQuestionCard(p.body, "📡 前回送れなかったメッセージを再送中...");
+      writeQuestion(p, ui).catch(() => {
+        settleRejectedQuestion(p, ref(db, `questions/${p.sessionId}/${p.key}`), ui);
+      });
+    });
+  }
+  // ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 
   let rxnBusy = false; // 連打による競合を防ぐ
   let rxnOpSeq = 0;    // 送信待ち中に次の操作が入った場合、古い確認表示で上書きしないための世代番号
@@ -661,80 +827,43 @@
     if (!sid) sid = (localStorage.getItem('ryu_student_id') || "").toUpperCase();
     if (!sname) sname = localStorage.getItem('ryu_student_name') || "";
 
-    let qCard = null; // 即時失敗時に取り除けるよう外で宣言
+    let entry = null;
+    let ui = null;
 
     try {
       const newQuestionRef = push(ref(db, `questions/${sessionIdAtSend}`));
-      const writePromise = set(newQuestionRef, {
+      entry = {
+        sessionId: sessionIdAtSend,
+        key: newQuestionRef.key,
         uid: currentUser.uid,
         email: currentUser.email,
         studentId: sid || "未入力",
         name: sname || "名前なし",
         body: bodyText,
-        timestamp: serverNow(),
-        read: false
-      });
-      writePromise.catch(() => {}); // タイムアウト後の失敗を未処理エラーにしない
+        createdAt: Date.now()
+      };
+      // 送信前に端末内へ保存（送信待ちのままページが閉じられても、次に開いたとき再送できるように）
+      addPendingQuestion(entry);
 
       // 楽観的更新：先にカードを表示し、入力欄をクリアする。
       // サーバー確認の結果に応じてカードのステータス表示を更新する。
-      document.getElementById('my-questions-container').classList.remove('hidden');
-      const qList = document.getElementById('my-questions-list');
-      qCard = document.createElement('div');
-      qCard.style.cssText = 'background:#f8f9fa; border:1px solid #ddd; padding:10px; border-radius:8px; font-size:14px; text-align:left;';
-      const qBody = document.createElement('div');
-      qBody.textContent = bodyText;
-      qCard.appendChild(qBody);
-      const qStatus = document.createElement('div');
-      qStatus.style.cssText = 'font-size:11px; margin-top:6px; font-weight:bold; color:#888;';
-      qStatus.textContent = "📡 送信中...";
-      qCard.appendChild(qStatus);
-      qList.prepend(qCard);
+      ui = createQuestionCard(bodyText, "📡 送信中...");
       document.getElementById('question-text').value = "";
 
-      // サーバーに届いたことが確認できた時点で呼ぶ（既読監視の開始もここで行う）
-      const markDelivered = () => {
-        qStatus.textContent = "⏳ 教員の確認待ち...";
-        qStatus.style.color = "#888";
-        const unsubscribe = onValue(newQuestionRef, (snap) => {
-          const data = snap.val();
-          if (data && data.read === true) {
-            qStatus.textContent = "✅ 教員が確認しました";
-            qStatus.style.color = "#34a853";
-            qCard.style.background = "#e6f4ea";
-            qCard.style.borderColor = "#c6e1d0";
-            unsubscribe();
-            questionUnsubscribers = questionUnsubscribers.filter(f => f !== unsubscribe);
-          }
-        });
-        questionUnsubscribers.push(unsubscribe);
-      };
-
-      try {
-        await withTimeout(writePromise, 8000);
+      const result = await writeQuestion(entry, ui);
+      if (result === 'delivered') {
         const status = document.getElementById('send-status');
         status.textContent = "送信完了！";
         status.style.color = "#34a853";
         setTimeout(() => { status.textContent = ""; }, 3000);
-        markDelivered();
-      } catch (e) {
-        if (e && e.isTimeout) {
-          // 書き込みはキュー済み。接続回復時に自動送信される。
-          qStatus.textContent = "📡 送信待ち（電波の回復後に自動的に届きます）";
-          showToast("電波が弱いため送信待ちです。回復すると自動的に届きます。");
-          writePromise.then(markDelivered).catch(() => {
-            // 回復後にサーバーから拒否された場合（講義終了後など）
-            qStatus.textContent = "❌ 送信できませんでした";
-            qStatus.style.color = "#d93025";
-          });
-          return; // sendBtn は finally で解除される
-        }
-        throw e; // 即時失敗は外側の catch へ
+      } else {
+        showToast("電波が弱いため送信待ちです。回復すると自動的に届きます。");
       }
     } catch (e) {
       console.error(e);
-      // 即時失敗：カードを取り除き、入力内容を復元して従来どおり案内する
-      if (qCard) qCard.remove();
+      // 即時失敗：端末内の保存とカードを取り除き、入力内容を復元して従来どおり案内する
+      if (entry) removePendingQuestion(entry.key);
+      if (ui) ui.card.remove();
       if (document.getElementById('my-questions-list').childElementCount === 0) {
         document.getElementById('my-questions-container').classList.add('hidden');
       }

@@ -321,12 +321,12 @@
 
       const targetId = latest.id;
       if (viewingSessionId === targetId) {
-        await logCurrentReactionRound(targetId);
-        await remove(ref(db, `reactions/${targetId}`));
+        // 記録・リアクション消去・講義終了を1回の書き込みで行う
+        await logAndClearViewingSession(targetId, { 'active_session': null });
       } else {
         await finalizeOtherSession(targetId);
+        await remove(ref(db, 'active_session'));
       }
-      await remove(ref(db, 'active_session'));
     } catch (e) {
       console.warn("期限切れ講義の自動終了に失敗:", e);
     } finally {
@@ -779,16 +779,16 @@
     }
   }
 
-  // 現在の集計を「1ラウンド」として reaction_logs に記録する。
+  // 現在の集計を「1ラウンド」分の記録データとして組み立てる。
   // 記録するのは人数（割合のもとになる値）と未回答者の一覧のみで、
   // 誰がどのボタンを押したか（個人別の回答内容）は記録しない。
-  // リアクションが1件もない場合は誤操作とみなし、記録しない。
-  async function logCurrentReactionRound(sessionId) {
-    if (!sessionId || currentAttCount === 0) return;
+  // リアクションが1件もない場合は誤操作とみなし、記録しない（null を返す）。
+  function buildCurrentRoundLog(sessionId) {
+    if (!sessionId || currentAttCount === 0) return null;
     const round = currentRoundForViewing();
     const { good, hard, wait, unanswered } = summarizeReactions(currentAttData, rawRxnData, round);
-    if (good + hard + wait === 0) return;
-    await set(push(ref(db, `reaction_logs/${sessionId}`)), {
+    if (good + hard + wait === 0) return null;
+    return {
       timestamp: serverNow(),
       attendance: currentAttCount,
       good: good,
@@ -796,7 +796,24 @@
       wait: wait,
       unansweredCount: unanswered.length,
       unanswered: unanswered
-    });
+    };
+  }
+
+  // 表示中セッションの「ラウンド記録」と「リアクション消去」を1回の書き込みにまとめる。
+  // extraUpdates に active_session の更新（round +1 や講義終了）を渡すと、それも同じ書き込みに含める。
+  // 旧実装は記録と消去が別々の書き込みだったため、途中で通信が切れると
+  // 「記録済みだが未消去」のような半端な状態が残る可能性があり、
+  // 記録と消去の間に届いた回答が記録されずに消える時間の幅も大きかった。
+  async function logAndClearViewingSession(sessionId, extraUpdates) {
+    const updates = {};
+    const logEntry = buildCurrentRoundLog(sessionId);
+    if (logEntry) {
+      const logKey = push(ref(db, `reaction_logs/${sessionId}`)).key;
+      updates[`reaction_logs/${sessionId}/${logKey}`] = logEntry;
+    }
+    updates[`reactions/${sessionId}`] = null;
+    Object.assign(updates, extraUpdates || {});
+    await update(ref(db), updates);
   }
 
   // 【追加】表示していない（＝ローカルにデータを持っていない）セッションの後始末。
@@ -813,10 +830,13 @@
       const attData = attSnap.val() || {};
       const rxnData = rxnSnap.val() || {};
       const total = Object.keys(attData).length;
+      // 記録と消去を1回の書き込みにまとめる（途中で失敗して半端な状態が残らないように）
+      const updates = {};
       if (total > 0) {
         const { good, hard, wait, unanswered } = summarizeReactions(attData, rxnData, null);
         if (good + hard + wait > 0) {
-          await set(push(ref(db, `reaction_logs/${sessionId}`)), {
+          const logKey = push(ref(db, `reaction_logs/${sessionId}`)).key;
+          updates[`reaction_logs/${sessionId}/${logKey}`] = {
             timestamp: serverNow(),
             attendance: total,
             good: good,
@@ -824,10 +844,11 @@
             wait: wait,
             unansweredCount: unanswered.length,
             unanswered: unanswered
-          });
+          };
         }
       }
-      await remove(ref(db, `reactions/${sessionId}`));
+      updates[`reactions/${sessionId}`] = null;
+      await update(ref(db), updates);
     } catch (e) {
       console.warn("旧セッションの後始末に失敗:", e);
     }
@@ -938,23 +959,18 @@
       onOk: async () => {
         assertWritableSemester();
         if (!viewingSessionId) return;
-        await logCurrentReactionRound(viewingSessionId);
-        if (viewingSessionId === activeSessionId && currentActiveSession) {
-          // ラウンド番号を +1 しつつ、リアクションを「同じ書き込みで」原子的に消去する。
-          // 学生側は active_session/round の変化を（既存のライブリスナー経由で）検知して
-          // 全端末のボタンを確実に初期化する。削除イベント頼みだった旧方式と違い、
+        const targetId = viewingSessionId;
+        const extra = {};
+        if (targetId === activeSessionId && currentActiveSession) {
+          // ラウンド番号を +1 する。学生側は active_session/round の変化を（既存のライブリスナー経由で）
+          // 検知して全端末のボタンを確実に初期化する。削除イベント頼みだった旧方式と違い、
           // スリープ復帰後の端末にも round の値として確実に伝わる。
-          // また、記録(log)と消去の間に滑り込んだ回答が記録されず消える競合も、
-          // 消去と round 更新が原子的になることで最小化される。
           const cur = (typeof currentActiveSession.round === 'number') ? currentActiveSession.round : 1;
-          await update(ref(db), {
-            ['reactions/' + viewingSessionId]: null,
-            'active_session/round': cur + 1
-          });
-        } else {
-          // 進行中の講義でなければ単純に消去（round は触らない）
-          await remove(ref(db, `reactions/${viewingSessionId}`));
+          extra['active_session/round'] = cur + 1;
         }
+        // 記録・リアクション消去・round 更新を1回の書き込みで原子的に行う。
+        // 進行中の講義でなければ round は触らず、記録と消去だけを行う。
+        await logAndClearViewingSession(targetId, extra);
       }
     });
   };
@@ -1067,15 +1083,13 @@
         // 最後のラウンドを記録し、個人別の回答が残らないようリアクションを消去してから終了する。
         // 過去回など、進行中とは別のセッションを表示中でも activeSessionId 側を後始末する。
         const targetId = activeSessionId;
-        if (targetId) {
-          if (viewingSessionId === targetId) {
-            await logCurrentReactionRound(targetId);
-            await remove(ref(db, `reactions/${targetId}`));
-          } else {
-            await finalizeOtherSession(targetId);
-          }
+        if (targetId && viewingSessionId === targetId) {
+          // 記録・リアクション消去・講義終了を1回の書き込みで行う
+          await logAndClearViewingSession(targetId, { 'active_session': null });
+        } else {
+          if (targetId) await finalizeOtherSession(targetId);
+          await remove(ref(db, 'active_session'));
         }
-        await remove(ref(db, 'active_session'));
         location.reload();
       }
     });
